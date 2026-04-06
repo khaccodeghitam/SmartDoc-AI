@@ -1,0 +1,13 @@
+streamlit
+langchain
+langchain-community
+langchain-text-splitters
+langchain-ollama
+faiss-cpu
+sentence-transformers
+pdfplumber
+pypdf
+python-docx
+rank-bm25
+python-dotenv
+ollama

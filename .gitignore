@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.streamlit/secrets.toml
+.streamlit/*.toml
+!/.streamlit/config.toml
+data/raw/*
+!data/raw/.gitkeep
+data/index/*
+!data/index/.gitkeep
+data/chat_history/*
+!data/chat_history/.gitkeep
