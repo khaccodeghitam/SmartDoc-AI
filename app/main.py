@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 
 import streamlit as st
 
+import sys
+for mod in list(sys.modules.keys()):
+    if 'rag_pipeline' in mod or 'app.rag_pipeline' in mod:
+        del sys.modules[mod]
+
 try:
-    from app.config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K
-    from app.rag_pipeline import answer_question, build_and_save_faiss_index, ingest_uploaded_file, search_similar_chunks
+    from app.config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K, CHAT_HISTORY_DIR
+    from app.rag_pipeline import answer_question, build_and_save_faiss_index, ingest_uploaded_file, search_similar_chunks, ingest_multiple_uploaded_files
     from app.ui import (
         apply_styles,
         render_chip_row,
@@ -17,8 +23,8 @@ try:
         render_sidebar_notes,
     )
 except ModuleNotFoundError:
-    from config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K
-    from rag_pipeline import answer_question, build_and_save_faiss_index, ingest_uploaded_file, search_similar_chunks
+    from config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K, CHAT_HISTORY_DIR
+    from rag_pipeline import answer_question, build_and_save_faiss_index, ingest_uploaded_file, search_similar_chunks, ingest_multiple_uploaded_files
     from ui import (
         apply_styles,
         render_chip_row,
@@ -29,6 +35,26 @@ except ModuleNotFoundError:
     )
 
 
+def _save_persistent_history(history: list) -> None:
+    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    history_file = CHAT_HISTORY_DIR / "history.json"
+    try:
+        history_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), "utf-8")
+    except Exception as e:
+        print(f"Error saving chat history: {e}")
+
+
+def _load_persistent_history() -> list:
+    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    history_file = CHAT_HISTORY_DIR / "history.json"
+    if history_file.exists():
+        try:
+            return json.loads(history_file.read_text("utf-8"))
+        except Exception:
+            return []
+    return []
+
+
 def _init_state() -> None:
     st.session_state.setdefault("last_index_dir", "")
     st.session_state.setdefault("last_index_name", "")
@@ -36,7 +62,10 @@ def _init_state() -> None:
     st.session_state.setdefault("retrieval_history", [])
     st.session_state.setdefault("last_chunks", [])
     st.session_state.setdefault("last_query", "")
-    st.session_state.setdefault("chat_history", [])
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = _load_persistent_history()
+    st.session_state.setdefault("confirm_clear_status", False)
+    st.session_state.setdefault("confirm_clear_history", False)
 
 
 def _card_start(title: str, subtitle: str | None = None) -> None:
@@ -72,7 +101,7 @@ def _append_history(kind: str, detail: str) -> None:
 
 
 def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
-    chat_history = st.session_state.setdefault("chat_history", [])
+    chat_history = st.session_state.get("chat_history", [])
     chat_history.insert(
         0,
         {
@@ -83,6 +112,7 @@ def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
         },
     )
     st.session_state["chat_history"] = chat_history[:20]
+    _save_persistent_history(st.session_state["chat_history"])
 
 
 def _render_result_card(index: int, doc) -> None:
@@ -134,7 +164,7 @@ def main() -> None:
         render_sidebar_help()
 
         st.markdown("### Cấu hình ingest")
-        uploaded_file = st.file_uploader("Upload tài liệu PDF/DOCX", type=["pdf", "docx"])
+        uploaded_files = st.file_uploader("Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)", type=["pdf", "docx"], accept_multiple_files=True)
         chunk_size = st.number_input(
             "Chunk size",
             min_value=200,
@@ -160,18 +190,41 @@ def main() -> None:
         st.markdown("---")
         render_sidebar_notes()
 
-        if st.button("Xóa trạng thái hiện tại"):
-            st.session_state["last_index_dir"] = ""
-            st.session_state["last_index_name"] = ""
-            st.session_state["last_uploaded_file"] = ""
-            st.session_state["retrieval_history"] = []
-            st.session_state["last_chunks"] = []
-            st.session_state["last_query"] = ""
-            st.rerun()
+        if not st.session_state["confirm_clear_status"]:
+            if st.button("Xóa trạng thái hiện tại"):
+                st.session_state["confirm_clear_status"] = True
+                st.rerun()
+        else:
+            st.warning("Bạn có chắc chắn muốn xóa trạng thái và vector store trên memory?")
+            col_yes, col_no = st.columns(2)
+            if col_yes.button("Đồng ý xóa", key="yes_clear_status"):
+                st.session_state["last_index_dir"] = ""
+                st.session_state["last_index_name"] = ""
+                st.session_state["last_uploaded_file"] = ""
+                st.session_state["retrieval_history"] = []
+                st.session_state["last_chunks"] = []
+                st.session_state["last_query"] = ""
+                st.session_state["confirm_clear_status"] = False
+                st.rerun()
+            if col_no.button("Hủy", key="no_clear_status"):
+                st.session_state["confirm_clear_status"] = False
+                st.rerun()
 
-        if st.button("Xóa lịch sử chat"):
-            st.session_state["chat_history"] = []
-            st.rerun()
+        if not st.session_state["confirm_clear_history"]:
+            if st.button("Xóa lịch sử chat"):
+                st.session_state["confirm_clear_history"] = True
+                st.rerun()
+        else:
+            st.warning("Bạn chắn chắn muốn xóa toàn bộ lịch sử chat?")
+            col_y_chat, col_n_chat = st.columns(2)
+            if col_y_chat.button("Đồng ý xóa", key="yes_clear_chat"):
+                st.session_state["chat_history"] = []
+                _save_persistent_history([])
+                st.session_state["confirm_clear_history"] = False
+                st.rerun()
+            if col_n_chat.button("Hủy", key="no_clear_chat"):
+                st.session_state["confirm_clear_history"] = False
+                st.rerun()
 
         st.markdown("---")
         _render_chat_sidebar()
@@ -199,39 +252,48 @@ def main() -> None:
 
         with left:
             _card_start("Bước 1: Nạp tài liệu", "Tải file lên, sau đó chunking và build FAISS index thật.")
-            if uploaded_file is not None:
-                st.success(f"Đã chọn file: {uploaded_file.name}")
+            if uploaded_files:
+                file_names = ", ".join([f.name for f in uploaded_files])
+                st.success(f"Đã chọn {len(uploaded_files)} file: {file_names}")
                 st.markdown(
                     """
                     <div class="smartdoc-muted">
                         Hệ thống sẽ lưu file vào <b>data/raw</b>, tách chunk bằng RecursiveCharacterTextSplitter
-                        và lưu FAISS index vào <b>data/index</b>.
+                        và lưu chung vào một FAISS index tại <b>data/index</b>.
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
                 if st.button("Ingest và tạo FAISS index", type="primary"):
-                    with st.spinner("Đang ingest, tạo embedding và build FAISS index..."):
-                        ingest_result = ingest_uploaded_file(
-                            uploaded_file=uploaded_file,
+                    with st.spinner(f"Đang ingest {len(uploaded_files)} file, tạo embedding và build FAISS index..."):
+                        # Use the new multi-file function
+                        ingest_result = ingest_multiple_uploaded_files(
+                            uploaded_files=uploaded_files,
                             chunk_size=int(chunk_size),
                             chunk_overlap=int(chunk_overlap),
                         )
+                        # Name the index based on first file or "multi_doc_index"
+                        idx_name = f"{len(uploaded_files)}_docs_" + uploaded_files[0].name if len(uploaded_files) > 1 else uploaded_files[0].name
                         index_result = build_and_save_faiss_index(
                             chunks=ingest_result.chunks,
-                            source_name=uploaded_file.name,
+                            source_name=idx_name,
                         )
 
                     st.session_state["last_index_dir"] = str(index_result.index_dir)
                     st.session_state["last_index_name"] = index_result.index_name
-                    st.session_state["last_uploaded_file"] = uploaded_file.name
+                    st.session_state["last_uploaded_file"] = file_names
                     st.session_state["last_chunks"] = ingest_result.chunks
                     st.session_state["last_query"] = ""
+                    
+                    # Store available sources for metadata filtering
+                    sources = list(set(chunk.metadata.get("source", "unknown") for chunk in ingest_result.chunks))
+                    # Extract just the filename for cleaner UI
+                    st.session_state["available_sources"] = list(set(Path(s).name for s in sources))
 
                     _append_history(
                         "index",
-                        f"{uploaded_file.name} -> {ingest_result.chunks_count} chunks -> {index_result.index_name}",
+                        f"Multi docs ({len(uploaded_files)}) -> {ingest_result.chunks_count} chunks -> {index_result.index_name}",
                     )
 
                     st.success("Ingest hoàn tất")
@@ -277,7 +339,7 @@ def main() -> None:
         left, right = st.columns([1.0, 1.0], gap="large")
 
         with left:
-            _card_start("Bước 2: Truy vấn top-k chunks", "Dùng FAISS index đã tạo để test retrieval.")
+            _card_start("Bước 2: Truy vấn top-k chunks", "Chạy FAISS (Vector) + BM25 (Keyword) Hybrid Search.")
             last_index_dir = st.session_state.get("last_index_dir")
             if last_index_dir:
                 query = st.text_area(
@@ -286,9 +348,16 @@ def main() -> None:
                     height=120,
                     key="retrieval_query",
                 )
-                if st.button("Tìm chunks liên quan", key="retrieve_button") and query.strip():
-                    with st.spinner("Đang search trên FAISS..."):
-                        docs = search_similar_chunks(last_index_dir, query=query, top_k=int(top_k))
+                
+                # Multi-document metadata filter
+                available_sources = st.session_state.get("available_sources", [])
+                source_filter = None
+                if available_sources:
+                    source_filter = st.multiselect("Lọc theo tài liệu (Metadata Filter)", options=available_sources)
+                
+                if st.button("Tìm chunks liên quan", key="retrieve_button", disabled=not query.strip()):
+                    with st.spinner("Đang search bằng Hybrid Search (FAISS + BM25)..."):
+                        docs = search_similar_chunks(last_index_dir, query=query, top_k=int(top_k), source_filter=source_filter)
                     st.session_state["last_query"] = query
                     st.session_state["last_chunks"] = docs
                     _append_history("query", query)
@@ -296,8 +365,6 @@ def main() -> None:
                     if docs:
                         st.markdown("#### Tóm tắt nhanh")
                         st.write(docs[0].page_content[:900])
-                elif st.button("Tìm chunks liên quan", disabled=True):
-                    pass
             else:
                 st.warning("Chưa có index trong session. Hãy upload và tạo FAISS index trước.")
             _card_end()
@@ -315,7 +382,7 @@ def main() -> None:
         left, right = st.columns([1.0, 1.0], gap="large")
 
         with left:
-            _card_start("Bước 3: Hỏi đáp với LLM", "Lấy top-k chunks từ FAISS và sinh câu trả lời bằng Ollama.")
+            _card_start("Bước 3: Hỏi đáp với LLM", "Retrieval Hybrid kết hợp cùng Qwen2.5:7b.")
             last_index_dir = st.session_state.get("last_index_dir")
             if last_index_dir:
                 qa_query = st.text_area(
@@ -324,15 +391,24 @@ def main() -> None:
                     height=120,
                     key="qa_query",
                 )
+                
+                # Multi-document metadata filter (QA)
+                available_sources = st.session_state.get("available_sources", [])
+                qa_source_filter = None
+                if available_sources:
+                    qa_source_filter = st.multiselect("Lọc tài liệu để trả lời", options=available_sources, key="qa_source_filter")
+                
                 if st.button("Trả lời bằng LLM", type="primary", key="qa_button"):
                     if not qa_query.strip():
                         st.warning("Vui lòng nhập câu hỏi trước khi gửi.")
                     else:
-                        with st.spinner("Đang truy xuất nguồn và sinh câu trả lời..."):
+                        with st.spinner("Đang truy xuất nguồn (Hybrid Search) và sinh câu trả lời..."):
                             rag_result = answer_question(
                                 index_dir=last_index_dir,
                                 query=qa_query.strip(),
                                 top_k=int(top_k),
+                                chat_history=st.session_state.get("chat_history", []),
+                                source_filter=qa_source_filter,
                             )
 
                         st.session_state["last_query"] = qa_query.strip()
