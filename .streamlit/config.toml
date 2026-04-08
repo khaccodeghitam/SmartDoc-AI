@@ -8,3 +8,6 @@ font = "sans serif"
 
 [server]
 fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
