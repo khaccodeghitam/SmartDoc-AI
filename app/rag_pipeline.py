@@ -425,7 +425,8 @@ def _detect_sources_mentioned_in_query(query: str, available_sources: list[str])
 @lru_cache(maxsize=256)
 def _detect_sources_mentioned_in_query_cached(query_normalized: str, available_sources: tuple[str, ...]) -> tuple[str, ...]:
     query_norm = f" {query_normalized} "
-    query_tokens = {token for token in query_normalized.split() if len(token) >= 2 and not token.isdigit()}
+    query_tokens = {token for token in query_normalized.split() if len(token) >= 2}
+    query_compact = query_normalized.replace(" ", "")
     stop_tokens = {
         "bai",
         "tap",
@@ -454,17 +455,27 @@ def _detect_sources_mentioned_in_query_cached(query_normalized: str, available_s
                 matched = True
                 break
 
+            candidate_compact = candidate.replace(" ", "")
+            if candidate_compact and candidate_compact in query_compact:
+                matched = True
+                break
+
             candidate_tokens = {
                 token
                 for token in candidate.split()
-                if len(token) >= 2 and not token.isdigit() and token not in stop_tokens
+                if len(token) >= 2 and token not in stop_tokens
             }
             if not candidate_tokens:
                 continue
 
             overlapped = candidate_tokens.intersection(query_tokens)
             overlap_ratio = len(overlapped) / len(candidate_tokens)
-            if len(overlapped) >= 2 and overlap_ratio >= 0.5:
+            min_overlap = 1 if len(candidate_tokens) <= 2 else 2
+            if len(overlapped) >= min_overlap and overlap_ratio >= 0.5:
+                matched = True
+                break
+
+            if any(token.isdigit() for token in overlapped) and overlap_ratio >= 0.34:
                 matched = True
                 break
 
@@ -519,6 +530,69 @@ def _metadata_matches_filters(
     return True
 
 
+def _extract_explicit_source_reference(query: str) -> str | None:
+    q_norm = _normalize_for_match(query)
+    if not q_norm:
+        return None
+
+    tokens = [token for token in q_norm.split() if token]
+    if not tokens:
+        return None
+
+    # Generic tail words that usually start the next intent clause.
+    stop_tokens = {
+        "co",
+        "bao",
+        "nhieu",
+        "la",
+        "gi",
+        "trong",
+        "gom",
+        "so",
+        "luong",
+        "bai",
+        "tap",
+        "exercise",
+        "question",
+        "task",
+        "content",
+        "noi",
+        "dung",
+        "chi",
+        "tiet",
+        "chapter",
+    }
+    pronouns = {"do", "nay", "kia", "ay", "no"}
+
+    def collect_tail(start_index: int) -> str | None:
+        collected: list[str] = []
+        for token in tokens[start_index:]:
+            if token in stop_tokens and collected:
+                break
+            if token in stop_tokens and not collected:
+                continue
+            collected.append(token)
+            if len(collected) >= 8:
+                break
+
+        if not collected:
+            return None
+        if len(collected) == 1 and collected[0] in pronouns:
+            return None
+
+        return " ".join(collected).strip()
+
+    for idx in range(len(tokens)):
+        if tokens[idx] == "file":
+            return collect_tail(idx + 1)
+        if tokens[idx] in {"document", "doc"}:
+            return collect_tail(idx + 1)
+        if tokens[idx] == "tai" and idx + 1 < len(tokens) and tokens[idx + 1] == "lieu":
+            return collect_tail(idx + 2)
+
+    return None
+
+
 def _resolve_effective_source_filter(
     query: str,
     source_filter: list[str] | None,
@@ -527,8 +601,49 @@ def _resolve_effective_source_filter(
     available_sources = _sources_from_docs(all_docs)
     mentioned_sources = _detect_sources_mentioned_in_query(query, available_sources)
     if mentioned_sources:
+        if source_filter:
+            narrowed = [source for source in mentioned_sources if _source_matches_filter(source, source_filter)]
+            if narrowed:
+                return narrowed
+            return source_filter
         return mentioned_sources
     return source_filter if source_filter else None
+
+
+def _detect_source_filter_conflict(
+    query: str,
+    source_filter: list[str] | None,
+    all_docs: list[Document],
+) -> tuple[bool, list[str]]:
+    if not source_filter:
+        return False, []
+
+    available_sources = _sources_from_docs(all_docs)
+    mentioned_sources = _detect_sources_mentioned_in_query(query, available_sources)
+    if not mentioned_sources:
+        return False, []
+
+    narrowed = [source for source in mentioned_sources if _source_matches_filter(source, source_filter)]
+    if narrowed:
+        return False, []
+
+    return True, mentioned_sources
+
+
+def _detect_unknown_source_reference(
+    query: str,
+    all_docs: list[Document],
+) -> tuple[bool, str]:
+    explicit_ref = _extract_explicit_source_reference(query)
+    if not explicit_ref:
+        return False, ""
+
+    available_sources = _sources_from_docs(all_docs)
+    mentioned_sources = _detect_sources_mentioned_in_query(query, available_sources)
+    if mentioned_sources:
+        return False, ""
+
+    return True, explicit_ref
 
 
 @lru_cache(maxsize=1)
@@ -717,6 +832,32 @@ def _detect_vietnamese(text: str) -> bool:
     return any(char in text_lower for char in vietnamese_chars)
 
 
+def _is_probably_english_query(text: str) -> bool:
+    normalized = _normalize_for_match(text)
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return False
+
+    english_markers = {
+        "what",
+        "how",
+        "why",
+        "when",
+        "where",
+        "which",
+        "who",
+        "count",
+        "many",
+        "number",
+        "list",
+        "show",
+        "chapter",
+        "exercise",
+    }
+    marker_hits = sum(1 for token in tokens if token in english_markers)
+    return marker_hits >= 1
+
+
 def _answer_without_footer(answer_text: str) -> str:
     return answer_text.split("---", 1)[0].strip()
 
@@ -787,8 +928,12 @@ def _rewrite_query_with_history(
     chat_history: list[dict] | None,
     model_name: str,
 ) -> tuple[str, bool]:
-    # Do not rewrite queries that are already explicit deterministic intents.
-    if _is_exercise_content_query(query) or _is_exercise_count_query(query) or _is_architecture_style_count_query(query):
+    is_deterministic_intent = bool(
+        _is_exercise_content_query(query) or _is_exercise_count_query(query) or _is_architecture_style_count_query(query)
+    )
+
+    # Keep deterministic queries unchanged unless they are follow-up/ambiguous references.
+    if is_deterministic_intent and not _is_follow_up_query(query):
         return query, False
 
     if not chat_history:
@@ -800,6 +945,12 @@ def _rewrite_query_with_history(
 
     if not _is_follow_up_query(query):
         return query, False
+
+    if is_deterministic_intent:
+        last_question = str(chat_history[0].get("question", "")).strip() if chat_history else ""
+        if last_question and last_question.lower() != query.lower():
+            heuristic = f"{query} (ngu canh cau truoc: {last_question})"
+            return heuristic, True
 
     rewrite_prompt = (
         "Ban la bo phan viet lai truy van retrieval cho RAG.\n"
@@ -938,13 +1089,14 @@ def _build_prompt(query: str, docs: list[Document], chat_history: list[dict] | N
     history_context = _build_chat_history_context(chat_history)
     history_text = f"Lịch sử hội thoại liên quan:\n{history_context}\n\n" if history_context else ""
 
-    if _detect_vietnamese(query):
+    if _detect_vietnamese(query) or not _is_probably_english_query(query):
         return (
             "Sử dụng ngữ cảnh sau đây để trả lời câu hỏi.\n"
             "Nếu không đủ thông tin, hãy nói rõ là không tìm thấy thông tin trong tài liệu.\n"
             "Trả lời ngắn gọn (3-4 câu) bằng tiếng Việt.\n"
             "Nếu có thông tin trích dẫn thì kèm [Sx] ngay sau câu liên quan.\n\n"
-            "KHONG duoc bo sung thong tin ngoai context, khong duoc tu them danh sach bai tap neu context khong noi den.\n\n"
+            "KHONG duoc bo sung thong tin ngoai context, khong duoc tu them danh sach bai tap neu context khong noi den.\n"
+            "KHONG duoc tra loi bang tieng Trung.\n\n"
             f"{history_text}"
             f"Ngữ cảnh tài liệu:\n{context_text}\n\n"
             f"Câu hỏi: {query}\n\n"
@@ -956,7 +1108,8 @@ def _build_prompt(query: str, docs: list[Document], chat_history: list[dict] | N
         "If you don't know the answer, say you don't know.\n"
         "Keep answer concise (3-4 sentences).\n"
         "If citing information, include [Sx] after the relevant sentence.\n\n"
-        "Do not add facts outside the context and do not invent exercise lists unless explicitly present in context.\n\n"
+        "Do not add facts outside the context and do not invent exercise lists unless explicitly present in context.\n"
+        "Never answer in Chinese. Use the same language as the question, and if ambiguous prefer Vietnamese.\n\n"
         f"{history_text}"
         f"Document Context:\n{context_text}\n\n"
         f"Question: {query}\n\n"
@@ -1039,17 +1192,28 @@ def _is_exercise_count_query(query: str) -> bool:
     q = _normalize_for_match(query)
     intent_keywords = [
         "bao nhieu",
+        "co bao nhieu",
         "tong",
+        "tong so",
+        "tong cong",
         "liet ke",
         "danh sach",
         "so bai",
+        "so luong",
+        "so luong bai",
         "may bai",
         "how many",
         "number of",
+        "total number",
         "list all",
     ]
     has_intent = any(keyword in q for keyword in intent_keywords)
-    has_target = bool(re.search(r"\bbai\b", q)) or ("exercise" in q) or ("question" in q)
+    has_target = bool(re.search(r"\bbai\b", q)) or ("exercise" in q) or ("question" in q) or ("task" in q)
+
+    # Catch common Vietnamese phrasing like "Số lượng bài tập ..." even when keywords are split.
+    if not has_intent:
+        has_intent = bool(re.search(r"\b(so\s*luong|bao\s*nhieu|tong)\b", q))
+
     return has_intent and has_target
 
 
@@ -1061,6 +1225,71 @@ def _extract_chapter_number(query: str) -> int | None:
         return int(match.group(1))
     except ValueError:
         return None
+
+
+def _extract_chapter_title_keyword(query: str) -> str | None:
+    q_norm = _normalize_for_match(query)
+    match = re.search(r"(?:chuong|chương|chapter)\s*[:\-.]?\s*(.+)", q_norm, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    tail = match.group(1).strip()
+    if not tail:
+        return None
+
+    stop_tokens = {
+        "co",
+        "bao",
+        "nhieu",
+        "la",
+        "gi",
+        "trong",
+        "tai",
+        "lieu",
+        "gom",
+        "danh",
+        "sach",
+        "bai",
+        "tap",
+        "how",
+        "many",
+        "number",
+        "of",
+        "in",
+        "exercise",
+    }
+
+    tokens = [token for token in tail.split() if token]
+    kept: list[str] = []
+    for token in tokens:
+        if token in stop_tokens:
+            if kept:
+                break
+            continue
+        kept.append(token)
+        if len(kept) >= 6:
+            break
+
+    if not kept:
+        return None
+    return " ".join(kept)
+
+
+def _looks_like_section_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or len(stripped) < 3 or len(stripped) > 90:
+        return False
+    if re.search(r"(?i)^\s*(?:bai|bài)\s*(?:tap|tập)", stripped):
+        return False
+    if not re.search(r"[A-Za-zÀ-ỹ]", stripped):
+        return False
+
+    letters = [char for char in stripped if char.isalpha()]
+    if not letters:
+        return False
+
+    upper_ratio = sum(1 for char in letters if char == char.upper()) / len(letters)
+    return upper_ratio >= 0.7
 
 
 def _slice_text_by_chapter(text: str, chapter_number: int | None) -> str:
@@ -1085,15 +1314,90 @@ def _slice_text_by_chapter(text: str, chapter_number: int | None) -> str:
     return text[start_match.start() : end_index]
 
 
+def _slice_text_by_chapter_title(text: str, chapter_title_keyword: str | None) -> str:
+    if not chapter_title_keyword:
+        return ""
+
+    keyword_norm = _normalize_for_match(chapter_title_keyword)
+    if not keyword_norm:
+        return ""
+
+    lines = text.splitlines()
+    norm_lines = [_normalize_for_match(line) for line in lines]
+
+    start_index = -1
+    for idx, (line, norm_line) in enumerate(zip(lines, norm_lines)):
+        if keyword_norm in norm_line and _looks_like_section_heading(line):
+            start_index = idx
+            break
+
+    if start_index == -1:
+        for idx, norm_line in enumerate(norm_lines):
+            if keyword_norm in norm_line:
+                start_index = idx
+                break
+
+    if start_index == -1:
+        return ""
+
+    end_index = len(lines)
+    for idx in range(start_index + 1, len(lines)):
+        if _looks_like_section_heading(lines[idx]):
+            end_index = idx
+            break
+
+    return "\n".join(lines[start_index:end_index]).strip()
+
+
 def _natural_sort_key(value: str) -> list[Any]:
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)]
 
 
 def _extract_vi_exercises(text: str) -> list[str]:
     pattern = re.compile(
-        r"(?im)^\s*((?:bài|bai)\s*(?:tập|tap|thực\s*hành|thuc\s*hanh)?\s*[:\-]?\s*\d{1,3}\b[^\n]*)"
+        r"(?i)^\s*(?:bài|bai)\s*(?:tập|tap|thực\s*hành|thuc\s*hanh)?\s*[:\-]?\s*(\d{1,3})\b(?:\s*[:\-]?\s*(.*))?$"
     )
-    return sorted({match.strip()[:180] for match in pattern.findall(text) if match.strip()}, key=_natural_sort_key)
+
+    lines = [line.strip() for line in text.splitlines()]
+    exercises: list[str] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    current_section = ""
+
+    for idx, line in enumerate(lines):
+        if not line:
+            continue
+
+        if _looks_like_section_heading(line):
+            current_section = line
+            continue
+
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        number = match.group(1)
+        title = (match.group(2) or "").strip(" :.-")
+
+        if not title and idx + 1 < len(lines):
+            next_line = lines[idx + 1].strip()
+            if next_line and not pattern.match(next_line) and not _looks_like_section_heading(next_line):
+                title = next_line.strip(" :.-")
+
+        section_norm = _normalize_for_match(current_section or "tong quat")
+        title_norm = _normalize_for_match(title)
+        unique_key = (section_norm, number, title_norm)
+        if unique_key in seen_keys:
+            continue
+        seen_keys.add(unique_key)
+
+        item = f"Bài {number}"
+        if current_section:
+            item = f"{current_section} - {item}"
+        if title:
+            item = f"{item}: {title[:160]}"
+        exercises.append(item)
+
+    return exercises
 
 
 def _extract_en_numbered_exercises(text: str) -> list[str]:
@@ -1165,6 +1469,7 @@ def _deterministic_exercise_map(
     source_filter: list[str] | None,
 ) -> dict[str, list[str]]:
     chapter_number = _extract_chapter_number(query)
+    chapter_title_keyword = None if chapter_number is not None else _extract_chapter_title_keyword(query)
     source_paths = {
         str(doc.metadata.get("source", ""))
         for doc in all_docs
@@ -1181,11 +1486,15 @@ def _deterministic_exercise_map(
         if not full_text:
             continue
 
-        target_text = _slice_text_by_chapter(full_text, chapter_number)
-        if chapter_number is not None and not target_text:
-            continue
-        if chapter_number is None:
+        if chapter_number is not None:
+            target_text = _slice_text_by_chapter(full_text, chapter_number)
+        elif chapter_title_keyword:
+            target_text = _slice_text_by_chapter_title(full_text, chapter_title_keyword)
+        else:
             target_text = full_text
+
+        if (chapter_number is not None or chapter_title_keyword) and not target_text:
+            continue
 
         exercises = _extract_exercises_from_text(target_text)
         if exercises:
@@ -1376,7 +1685,59 @@ def answer_question(
 ) -> RagResult:
     vector_store = load_faiss_index(index_dir)
     all_docs = list(vector_store.docstore._dict.values())
-    effective_filter = _resolve_effective_source_filter(query=query, source_filter=source_filter, all_docs=all_docs)
+    rewritten_query, used_rewrite = _rewrite_query_with_history(
+        query=query,
+        chat_history=chat_history,
+        model_name=model_name,
+    )
+    query_for_scope = rewritten_query if used_rewrite else query
+
+    has_unknown_source_ref, source_ref_hint = _detect_unknown_source_reference(
+        query=query_for_scope,
+        all_docs=all_docs,
+    )
+    if has_unknown_source_ref:
+        source_names = sorted({_source_name_from_path(str((doc.metadata or {}).get("source", "")) or "unknown") for doc in all_docs}, key=_natural_sort_key)
+        if source_filter:
+            selected_names = sorted({_source_name_from_path(source) or source for source in source_filter}, key=_natural_sort_key)
+            available_note = f"Bộ lọc hiện tại: {', '.join(selected_names)}"
+        else:
+            available_note = f"Tài liệu hiện có trong index: {', '.join(source_names)}"
+
+        return _build_result(
+            answer_body=(
+                f"Không nhận diện được tài liệu đích '{source_ref_hint}' trong dữ liệu đã index.\n"
+                f"{available_note}\n"
+                "Vui lòng nhập đúng tên tài liệu hoặc chọn lại bộ lọc tài liệu."
+            ),
+            sources=[],
+            mode="Không tìm thấy tài liệu đích",
+            model_used="rule-based",
+            confidence="N/A",
+        )
+
+    has_filter_conflict, mentioned_outside_filter = _detect_source_filter_conflict(
+        query=query_for_scope,
+        source_filter=source_filter,
+        all_docs=all_docs,
+    )
+    if has_filter_conflict:
+        selected_names = sorted({_source_name_from_path(source) or source for source in (source_filter or [])}, key=_natural_sort_key)
+        asked_names = sorted({_source_name_from_path(source) or source for source in mentioned_outside_filter}, key=_natural_sort_key)
+        return _build_result(
+            answer_body=(
+                "Câu hỏi đang nhắc tới tài liệu nằm ngoài bộ lọc hiện tại.\n"
+                f"Bộ lọc đang chọn: {', '.join(selected_names)}\n"
+                f"Tài liệu được nhắc trong câu hỏi: {', '.join(asked_names)}\n"
+                "Vui lòng đổi bộ lọc tài liệu cho khớp với câu hỏi rồi thử lại."
+            ),
+            sources=[],
+            mode="Xung đột bộ lọc",
+            model_used="rule-based",
+            confidence="N/A",
+        )
+
+    effective_filter = _resolve_effective_source_filter(query=query_for_scope, source_filter=source_filter, all_docs=all_docs)
     filtered_all_docs = [
         doc
         for doc in all_docs
@@ -1387,11 +1748,7 @@ def answer_question(
             upload_date_filter=upload_date_filter,
         )
     ]
-    rewritten_query, used_rewrite = _rewrite_query_with_history(
-        query=query,
-        chat_history=chat_history,
-        model_name=model_name,
-    )
+    retrieval_query = query_for_scope
 
     effective_top_k = top_k
     if effective_filter and len(effective_filter) > 0:
@@ -1399,7 +1756,7 @@ def answer_question(
 
     docs = _multi_hop_retrieve(
         index_dir=index_dir,
-        query=rewritten_query,
+        query=retrieval_query,
         top_k=effective_top_k,
         source_filter=effective_filter,
         file_type_filter=file_type_filter,
@@ -1408,9 +1765,9 @@ def answer_question(
     sources = _format_sources(docs)
 
     has_deterministic_intent = bool(
-        _is_exercise_count_query(query)
-        or _is_exercise_content_query(query)
-        or _is_architecture_style_count_query(query)
+        _is_exercise_count_query(retrieval_query)
+        or _is_exercise_content_query(retrieval_query)
+        or _is_architecture_style_count_query(retrieval_query)
     )
 
     if not docs and not has_deterministic_intent:
@@ -1422,10 +1779,10 @@ def answer_question(
             confidence="N/A",
         )
 
-    if _is_exercise_count_query(query):
+    if _is_exercise_count_query(retrieval_query):
         source_exercises = _deterministic_exercise_map(
             all_docs=filtered_all_docs,
-            query=query,
+            query=retrieval_query,
             source_filter=effective_filter,
         )
         total_exercises = sum(len(items) for items in source_exercises.values())
@@ -1463,7 +1820,7 @@ def answer_question(
             confidence="N/A",
         )
 
-    exercise_number = _is_exercise_content_query(query)
+    exercise_number = _is_exercise_content_query(retrieval_query)
     if exercise_number:
         details = _extract_exercise_content_from_docs(
             all_docs=filtered_all_docs,
@@ -1493,7 +1850,7 @@ def answer_question(
             confidence="N/A",
         )
 
-    if _is_architecture_style_count_query(query):
+    if _is_architecture_style_count_query(retrieval_query):
         style_map = _deterministic_architecture_style_map(
             all_docs=filtered_all_docs,
             source_filter=effective_filter,
@@ -1527,7 +1884,7 @@ def answer_question(
             confidence="N/A",
         )
 
-    prompt = _build_prompt(query=rewritten_query, docs=docs, chat_history=chat_history)
+    prompt = _build_prompt(query=retrieval_query, docs=docs, chat_history=chat_history)
 
     def _invoke_with_model(active_model: str) -> tuple[str, int]:
         llm = OllamaLLM(model=active_model, base_url=OLLAMA_BASE_URL, temperature=0.2)

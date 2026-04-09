@@ -3,14 +3,22 @@ import unittest
 from langchain_core.documents import Document
 
 from app.rag_pipeline import (
+    _detect_unknown_source_reference,
+    _detect_source_filter_conflict,
     _detect_sources_mentioned_in_query,
+    _extract_explicit_source_reference,
+    _extract_chapter_title_keyword,
     _extract_architecture_styles_from_text,
     _extract_en_numbered_exercises,
     _extract_vi_exercises,
+    _is_exercise_count_query,
     _is_exercise_content_query,
     _is_follow_up_query,
+    _is_probably_english_query,
     _is_architecture_style_count_query,
+    _resolve_effective_source_filter,
     _slice_text_by_chapter,
+    _slice_text_by_chapter_title,
     _build_context_for_scoring,
 )
 
@@ -26,6 +34,19 @@ class TestDeterministicExtraction(unittest.TestCase):
         self.assertEqual(2, len(exercises))
         self.assertTrue(any("1" in item for item in exercises))
         self.assertTrue(any("2" in item for item in exercises))
+
+    def test_extract_vi_exercises_keeps_same_number_across_sections(self):
+        text = """
+        RESTFUL API
+        BÀI TẬP 1: GET API users
+
+        TRUY XUẤT PHẦN CỨNG
+        BÀI TẬP 1: Chụp ảnh bằng Camera
+        """
+        exercises = _extract_vi_exercises(text)
+        self.assertEqual(2, len(exercises))
+        self.assertTrue(any("RESTFUL API" in item for item in exercises))
+        self.assertTrue(any("TRUY XUẤT PHẦN CỨNG" in item for item in exercises))
 
     def test_extract_en_numbered_exercises(self):
         text = """
@@ -56,6 +77,28 @@ class TestDeterministicExtraction(unittest.TestCase):
         self.assertIn("Task B", chapter_2_text)
         self.assertNotIn("Task C", chapter_2_text)
 
+    def test_extract_chapter_title_keyword(self):
+        query = "Chương RESTFUL API có bao nhiêu bài tập?"
+        keyword = _extract_chapter_title_keyword(query)
+        self.assertEqual("restful api", keyword)
+
+    def test_slice_text_by_chapter_title(self):
+        text = """
+        LẬP TRÌNH MẠNG
+        BÀI TẬP 1: Task A
+
+        RESTFUL API
+        BÀI TẬP 1: Task B
+        BÀI TẬP 2: Task C
+
+        TRUY XUẤT PHẦN CỨNG
+        BÀI TẬP 1: Task D
+        """
+        sliced = _slice_text_by_chapter_title(text, "restful api")
+        self.assertIn("Task B", sliced)
+        self.assertIn("Task C", sliced)
+        self.assertNotIn("Task D", sliced)
+
     def test_detect_sources_mentioned_in_query(self):
         sources = [
             "Bai_tap_123_-_Do_hoa_dinh_vi.pdf",
@@ -64,6 +107,59 @@ class TestDeterministicExtraction(unittest.TestCase):
         query = "Cho toi dem bai tap trong file do hoa dinh vi"
         matched = _detect_sources_mentioned_in_query(query, sources)
         self.assertEqual(["Bai_tap_123_-_Do_hoa_dinh_vi.pdf"], matched)
+
+    def test_detect_sources_mentioned_in_query_compact_filename(self):
+        sources = ["DanhSachBT.docx", "Truy_xuat_phan_cung.pdf"]
+        query = "Dem so bai tap trong danh sach bt"
+        matched = _detect_sources_mentioned_in_query(query, sources)
+        self.assertEqual(["DanhSachBT.docx"], matched)
+
+    def test_resolve_effective_source_filter_prefers_query_mentioned_source(self):
+        docs = [
+            Document(page_content="A", metadata={"source": "Bai_tap_123_-_Do_hoa_dinh_vi.pdf"}),
+            Document(page_content="B", metadata={"source": "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"}),
+            Document(page_content="C", metadata={"source": "DanhSachBT.docx"}),
+        ]
+        selected = ["Bai_tap_123_-_Do_hoa_dinh_vi.pdf", "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"]
+        query = "Cho toi dem bai tap trong file truy xuat phan cung"
+        resolved = _resolve_effective_source_filter(query=query, source_filter=selected, all_docs=docs)
+        self.assertEqual(["Bai_tap_123_-_Truy_xuat_phan_cung.pdf"], resolved)
+
+    def test_resolve_effective_source_filter_keeps_selected_filter_when_query_mentions_other_file(self):
+        docs = [
+            Document(page_content="A", metadata={"source": "Bai_tap_123_-_Do_hoa_dinh_vi.pdf"}),
+            Document(page_content="B", metadata={"source": "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"}),
+            Document(page_content="C", metadata={"source": "DanhSachBT.docx"}),
+        ]
+        selected = ["Bai_tap_123_-_Do_hoa_dinh_vi.pdf"]
+        query = "Cho toi dem bai tap trong file DanhSachBT"
+        resolved = _resolve_effective_source_filter(query=query, source_filter=selected, all_docs=docs)
+        self.assertEqual(["Bai_tap_123_-_Do_hoa_dinh_vi.pdf"], resolved)
+
+    def test_detect_source_filter_conflict_when_query_mentions_unselected_source(self):
+        docs = [
+            Document(page_content="A", metadata={"source": "Bai_tap_123_-_Do_hoa_dinh_vi.pdf"}),
+            Document(page_content="B", metadata={"source": "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"}),
+        ]
+        selected = ["Bai_tap_123_-_Do_hoa_dinh_vi.pdf"]
+        query = "Noi dung bai tap trong file truy xuat phan cung"
+        has_conflict, mentioned = _detect_source_filter_conflict(query=query, source_filter=selected, all_docs=docs)
+        self.assertTrue(has_conflict)
+        self.assertEqual(["Bai_tap_123_-_Truy_xuat_phan_cung.pdf"], mentioned)
+
+    def test_extract_explicit_source_reference_from_query(self):
+        query = "So luong bai tap cua tai lieu truy xuat phan cung co bao nhieu"
+        self.assertEqual("truy xuat phan cung", _extract_explicit_source_reference(query))
+
+    def test_detect_unknown_source_reference_when_target_not_found(self):
+        docs = [
+            Document(page_content="A", metadata={"source": "Bai_tap_123_-_Do_hoa_dinh_vi.pdf"}),
+            Document(page_content="B", metadata={"source": "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"}),
+        ]
+        query = "So luong bai tap cua tai lieu ftgyhujnc"
+        has_unknown, hint = _detect_unknown_source_reference(query=query, all_docs=docs)
+        self.assertTrue(has_unknown)
+        self.assertEqual("ftgyhujnc", hint)
 
     def test_scoring_context_is_limited(self):
         docs = [
@@ -107,6 +203,14 @@ class TestDeterministicExtraction(unittest.TestCase):
     def test_follow_up_detection_for_short_referential_query(self):
         query = "còn bài 2 thì sao?"
         self.assertTrue(_is_follow_up_query(query))
+
+    def test_exercise_count_query_detects_so_luong_phrase(self):
+        query = "Số lượng bài tập của Truy xuất phần cứng ?"
+        self.assertTrue(_is_exercise_count_query(query))
+
+    def test_probably_english_query(self):
+        self.assertTrue(_is_probably_english_query("How many exercises in chapter 3?"))
+        self.assertFalse(_is_probably_english_query("RESTFUL API"))
 
 
 if __name__ == "__main__":

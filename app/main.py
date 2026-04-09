@@ -151,7 +151,7 @@ def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
     _save_persistent_history(st.session_state["chat_history"])
 
 
-def _highlight_context_snippet(text: str, query: str) -> str:
+def _highlight_context_snippet(text: str, query: str) -> tuple[str, int]:
     safe_text = html.escape(text or "")
     tokens = [token for token in re.findall(r"[\wÀ-ỹ]+", query, flags=re.UNICODE) if len(token) >= 3]
     seen: set[str] = set()
@@ -166,11 +166,13 @@ def _highlight_context_snippet(text: str, query: str) -> str:
             break
 
     highlighted = safe_text
+    total_matches = 0
     for token in unique_tokens:
         pattern = re.compile(re.escape(html.escape(token)), flags=re.IGNORECASE)
-        highlighted = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", highlighted)
+        highlighted, matches = pattern.subn(lambda m: f"<mark>{m.group(0)}</mark>", highlighted)
+        total_matches += matches
 
-    return highlighted.replace("\n", "<br>")
+    return highlighted.replace("\n", "<br>"), total_matches
 
 
 def _to_user_error_message(exc: Exception, stage: str) -> str:
@@ -228,11 +230,15 @@ def _render_sources(sources: list[dict], query: str) -> None:
         return
 
     for source in sources:
-        context_key = f"ctx_visible_{source['id']}"
+        source_identity = f"{source.get('id', 'S')}::{source.get('source', 'unknown')}::{source.get('page', 'n/a')}"
+        source_key_suffix = re.sub(r"[^a-zA-Z0-9_]+", "_", source_identity).strip("_")[:140] or "source"
+        context_key = f"ctx_visible_{source_key_suffix}"
+        button_key = f"btn_{source_key_suffix}"
         st.session_state.setdefault(context_key, False)
+
         with st.expander(
             f"{source['id']} | {source.get('file_name', source['source'])} | page: {source['page']}",
-            expanded=False,
+            expanded=bool(st.session_state.get(context_key, False)),
         ):
             st.caption(f"ID nguồn: {source['id']}")
             st.caption(f"Tên file: {source.get('file_name', source['source'])}")
@@ -243,11 +249,15 @@ def _render_sources(sources: list[dict], query: str) -> None:
             st.write(source["excerpt"])
 
             label = "Ẩn ngữ cảnh highlight" if st.session_state.get(context_key) else "Xem ngữ cảnh gốc + highlight"
-            if st.button(label, key=f"btn_{source['id']}"):
+            if st.button(label, key=button_key, use_container_width=True):
                 st.session_state[context_key] = not st.session_state.get(context_key, False)
+                st.rerun()
 
             if st.session_state.get(context_key):
-                highlighted = _highlight_context_snippet(source.get("context", source.get("excerpt", "")), query)
+                context_text = source.get("context", source.get("excerpt", ""))
+                highlighted, match_count = _highlight_context_snippet(context_text, query)
+                if match_count == 0:
+                    st.caption("Không tìm thấy từ khóa khớp trực tiếp trong đoạn này, đang hiển thị toàn bộ ngữ cảnh gốc.")
                 st.markdown(
                     f"""
                     <div class="smartdoc-card" style="margin-top:0.55rem; background: rgba(20, 34, 67, 0.82);">
