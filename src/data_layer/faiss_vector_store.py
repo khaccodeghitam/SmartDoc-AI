@@ -50,6 +50,30 @@ def build_and_save_faiss_index(
     )
 
 
+def update_faiss_index(
+    new_chunks: list[Document],
+    index_dir: str | Path,
+) -> IndexBuildResult:
+    """Load existing index and add new documents to it, then save back."""
+    if not new_chunks:
+        raise ValueError("No new chunks available to update index.")
+
+    # Load existing
+    vector_store = load_faiss_index(index_dir)
+    
+    # Add new
+    vector_store.add_documents(new_chunks)
+    
+    # Save back
+    vector_store.save_local(str(index_dir))
+
+    return IndexBuildResult(
+        index_name=Path(index_dir).name,
+        index_dir=Path(index_dir),
+        chunks_count=len(new_chunks),  # Count of added chunks
+    )
+
+
 def load_faiss_index(index_dir: str | Path) -> FAISS:
     embedder = build_embedder()
     return FAISS.load_local(

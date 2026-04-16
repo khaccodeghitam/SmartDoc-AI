@@ -480,6 +480,30 @@ html, body, [class*="css"] {
     -webkit-text-fill-color: #eef3ff !important;
 }
 
+/* Fix code block visibility */
+code {
+    background: rgba(13, 22, 45, 0.95) !important;
+    color: #56c8ff !important;
+    padding: 0.15rem 0.35rem !important;
+    border-radius: 6px !important;
+    border: 1px solid rgba(135, 167, 255, 0.35) !important;
+    font-family: monospace !important;
+}
+
+pre {
+    background: rgba(13, 22, 45, 0.95) !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(135, 167, 255, 0.35) !important;
+    padding: 1rem !important;
+}
+
+pre code {
+    background: transparent !important;
+    padding: 0 !important;
+    border: none !important;
+    color: #f3f7ff !important;
+}
+
 /* User bubble - slightly different tint */
 [data-testid="stChatMessageUser"] [data-testid="stChatMessage"] {
     background: rgba(31, 55, 115, 0.72) !important;

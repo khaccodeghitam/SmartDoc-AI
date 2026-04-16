@@ -23,7 +23,7 @@ from src.application.document_processing_pipeline import (
     ingest_multiple_uploaded_files,
     evaluate_chunk_strategies,
 )
-from src.data_layer.faiss_vector_store import build_and_save_faiss_index
+from src.data_layer.faiss_vector_store import build_and_save_faiss_index, update_faiss_index
 from src.application.rag_chain_manager import RAGChainManager, RAGAnswer
 from src.application.corag_chain_manager import CoRAGChainManager, CoRAGAnswer
 from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
@@ -284,6 +284,24 @@ def _render_chat_sidebar() -> None:
     if st.button("➕ Cuộc trò chuyện mới", type="primary", use_container_width=True, key="btn_new_session"):
         st.session_state["active_session_id"] = None
         st.session_state["chat_history"] = []
+        
+        # Reset hoàn toàn trạng thái RAG để bắt đầu phiên mới sạch sẽ
+        st.session_state["last_index_dir"] = ""
+        st.session_state["last_index_name"] = ""
+        st.session_state["last_uploaded_file"] = ""
+        st.session_state["available_sources"] = []
+        st.session_state["available_file_types"] = []
+        st.session_state["available_upload_dates"] = []
+        st.session_state["sidebar_source_filter"] = []
+        st.session_state["sidebar_file_type_filter"] = []
+        
+        # Cập nhật cả "hộp đen" F5 persistence về trạng thái trống
+        from src.data_layer.conversation_store import save_app_session
+        save_app_session(
+            index_dir="", index_name="", uploaded_file="",
+            sources=[], file_types=[], upload_dates=[]
+        )
+        
         st.rerun()
         
     sessions = st.session_state.get("chat_sessions", [])
@@ -355,6 +373,12 @@ def main() -> None:
 
     with st.sidebar:
         render_sidebar_header()
+        
+        # Move chat history to the top to avoid StreamlitAPIException when resetting filters
+        _render_chat_sidebar()
+        
+        st.markdown("---")
+        
         model_badge_slot = st.empty()
         render_model_badge(
             model_name=st.session_state.get("active_model", OLLAMA_MODEL),
@@ -421,7 +445,7 @@ def main() -> None:
 
 
         st.markdown("---")
-        _render_chat_sidebar()
+        # _render_chat_sidebar() moved to top
 
     render_chip_row(["Streamlit UI", "Streamlit + CSS", "FAISS", "Ollama", "PDF/DOCX"])
 
@@ -460,62 +484,110 @@ def main() -> None:
 
                 if st.button("Ingest và tạo FAISS index", type="primary"):
                     try:
-                        with st.spinner(f"Đang ingest {len(uploaded_files)} file, tạo embedding và build FAISS index..."):
+                        with st.spinner(f"Đang ingest {len(uploaded_files)} file..."):
                             ingest_result = ingest_multiple_uploaded_files(
                                 uploaded_files=uploaded_files,
                                 chunk_size=int(chunk_size),
                                 chunk_overlap=int(chunk_overlap),
                             )
-                            idx_name = f"{len(uploaded_files)}_docs_" + uploaded_files[0].name if len(uploaded_files) > 1 else uploaded_files[0].name
-                            index_result = build_and_save_faiss_index(
-                                chunks=ingest_result.chunks,
-                                source_name=idx_name,
-                            )
+                            
+                            existing_index = st.session_state.get("last_index_dir")
+                            if existing_index and Path(existing_index).exists():
+                                # Incrementally update existing index
+                                index_result = update_faiss_index(
+                                    new_chunks=ingest_result.chunks,
+                                    index_dir=existing_index,
+                                )
+                                is_incremental = True
+                            else:
+                                # Build fresh index
+                                idx_name = f"{len(uploaded_files)}_docs_" + uploaded_files[0].name if len(uploaded_files) > 1 else uploaded_files[0].name
+                                index_result = build_and_save_faiss_index(
+                                    chunks=ingest_result.chunks,
+                                    source_name=idx_name,
+                                )
+                                is_incremental = False
+                            
                     except Exception as exc:
                         st.error(_to_user_error_message(exc, stage="ingest"))
                         _append_history("error", f"Ingest failed: {type(exc).__name__}")
                     else:
                         st.session_state["last_index_dir"] = str(index_result.index_dir)
                         st.session_state["last_index_name"] = index_result.index_name
-                        st.session_state["last_uploaded_file"] = file_names
+                        
+                        # Update cumulative file list
+                        new_file_names = ", ".join([f.name for f in uploaded_files])
+                        if is_incremental:
+                            st.session_state["last_uploaded_file"] = f"{st.session_state.get('last_uploaded_file', '')}, {new_file_names}"
+                        else:
+                            st.session_state["last_uploaded_file"] = new_file_names
+                            
                         st.session_state["last_chunks"] = ingest_result.chunks
                         st.session_state["last_bi_encoder_chunks"] = []
                         st.session_state["last_vector_only_chunks"] = []
                         st.session_state["last_query"] = ""
 
-                        sources = sorted({
+                        # Extract metadata from NEW chunks
+                        new_sources = {
                             Path(str(chunk.metadata.get("source", "unknown"))).name
                             for chunk in ingest_result.chunks if chunk.metadata
-                        })
-                        file_types = sorted({
+                        }
+                        new_file_types = {
                             str(chunk.metadata.get("file_type", "")).lower().lstrip(".")
                             for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("file_type")
-                        })
-                        upload_dates = sorted({
+                        }
+                        new_upload_dates = {
                             str(chunk.metadata.get("upload_date", "")).strip()
                             for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("upload_date")
-                        }, reverse=True)
-                        ingested_paths = sorted({
+                        }
+                        new_ingested_paths = {
                             str(chunk.metadata.get("source", ""))
                             for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("source")
-                        })
+                        }
 
-                        st.session_state["available_sources"] = sources
-                        st.session_state["available_file_types"] = file_types
-                        st.session_state["available_upload_dates"] = upload_dates
-                        st.session_state["last_ingested_paths"] = ingested_paths
+                        # Merge with EXISTING session state metadata
+                        st.session_state["available_sources"] = sorted(list(set(st.session_state.get("available_sources", [])) | set(new_sources)))
+                        st.session_state["available_file_types"] = sorted(list(set(st.session_state.get("available_file_types", [])) | set(new_file_types)))
+                        st.session_state["available_upload_dates"] = sorted(list(set(st.session_state.get("available_upload_dates", [])) | set(new_upload_dates)), reverse=True)
+                        st.session_state["last_ingested_paths"] = sorted(list(set(st.session_state.get("last_ingested_paths", [])) | set(new_ingested_paths)))
+                        
                         st.session_state["pending_sidebar_filter_reset"] = True
                         st.session_state["chunk_benchmark_rows"] = []
 
-                        # Lưu trạng thái index xuống file để khôi phục khi F5
+                        # Lưu trạng thái index xuống file "hộp đen" F5 persistence
                         save_app_session(
-                            index_dir=str(index_result.index_dir),
-                            index_name=index_result.index_name,
-                            uploaded_file=file_names,
-                            sources=sources,
-                            file_types=file_types,
-                            upload_dates=upload_dates,
+                            index_dir=st.session_state["last_index_dir"],
+                            index_name=st.session_state["last_index_name"],
+                            uploaded_file=st.session_state["last_uploaded_file"],
+                            sources=st.session_state["available_sources"],
+                            file_types=st.session_state["available_file_types"],
+                            upload_dates=st.session_state["available_upload_dates"],
                         )
+                        
+                        # Cập nhật thông tin bổ sung vào Session hiện tại (nếu có)
+                        active_id = st.session_state.get("active_session_id")
+                        if active_id:
+                            for sess in st.session_state.get("chat_sessions", []):
+                                if sess.get("session_id") == active_id:
+                                    sess["rag_state"] = {
+                                        "last_index_dir": st.session_state["last_index_dir"],
+                                        "last_index_name": st.session_state["last_index_name"],
+                                        "last_uploaded_file": st.session_state["last_uploaded_file"],
+                                        "available_sources": st.session_state["available_sources"],
+                                        "available_file_types": st.session_state["available_file_types"],
+                                        "available_upload_dates": st.session_state["available_upload_dates"],
+                                    }
+                                    save_persistent_history(st.session_state["chat_sessions"])
+                                    break
+
+                        # Ghi log lịch sử hệ thống
+                        _append_history("index", f"{'Nạp thêm' if is_incremental else 'Nạp mới'}: {len(uploaded_files)} file -> {index_result.index_name}")
+
+                        st.session_state["ingest_notice"] = (
+                            f"Đã {'nạp thêm' if is_incremental else 'tạo mới'} {ingest_result.raw_docs_count} docs. "
+                            f"Tổng số file đang khả dụng: {len(st.session_state['available_sources'])}"
+                        )
+                        st.rerun()
 
                         _append_history("index", f"Multi docs ({len(uploaded_files)}) -> {ingest_result.chunks_count} chunks -> {index_result.index_name}")
                         st.session_state["ingest_notice"] = (
