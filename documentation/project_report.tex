@@ -1,0 +1,43 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage{bookmark}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{BÁO CÁO ĐỒ ÁN: SMARTDOC AI (ADVANCED RAG)}
+\author{Sinh viên thực hiện \and Lớp: PTPMMNM}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Tổng quan dự án}
+Dự án SmartDoc AI là một hệ thống hỏi đáp tài liệu (RAG) nâng cao dành cho sinh viên và giảng viên. Hệ thống được thiết kế theo kiến trúc đa lớp (Multi-layer Architecture) để đảm bảo tính module hóa, dễ bảo trì và dễ mở rộng.
+
+\section{Kiến trúc hệ thống}
+Hệ thống được chia làm 4 lớp chính:
+\begin{itemize}
+    \item \textbf{Presentation Layer (UI):} Xây dựng bằng Streamlit, chịu trách nhiệm giao tiếp với người dùng, hiển thị tài liệu, và quản lý các luồng hội thoại.
+    \item \textbf{Application Layer:} Đóng vai trò là Orchestrator. Lớp này quản lý pipeline xử lý tài liệu, Prompt Engineering, Query Rewriting, và điều phối chuỗi RAG (RAG Chain Manager).
+    \item \textbf{Model Layer:} Chịu trách nhiệm tương tác bằng Ollama (Chạy các local model như qwen2.5:7b, qwen2.5:1.5b), cung cấp khả năng Inference và điểm Self-RAG Confidence Score.
+    \item \textbf{Data Layer:} Quản lý cơ sở dữ liệu Vector (FAISS), lưu trữ hội thoại, và các thao tác nhúng dữ liệu (Embeddings) bằng mô hình đồ thị đa ngữ (Multilingual MPNet).
+\end{itemize}
+
+\section{Các tính năng Advanced RAG đã thực hiện}
+\begin{enumerate}
+    \item \textbf{Hybrid Search:} Kết hợp tìm kiếm bằng Vector (FAISS - Dense) với tìm kiếm từ vựng (BM25 - Sparse) để đem lại độ chính xác cao nhất.
+    \item \textbf{Cross-Encoder Reranking:} Sắp xếp lại mức độ liên quan của các đoạn văn bản (chunks) bằng mô hình MS-Marco Cross-Encoder.
+    \item \textbf{Query Rewriting:} Hệ thống sử dụng mô hình LLM nhỏ hơn để viết lại câu hỏi (Follow-up) dựa vào ngữ cảnh hội thoại trước đó.
+    \item \textbf{Multi-hop Reasoning:} Mở rộng từ khóa của truy vấn từ ngữ cảnh truy xuất lần một (Hop 1) để tiếp tục truy vấn các thông tin nằm rải rác (Hop 2).
+    \item \textbf{Self-RAG (Confidence Scoring):} Hệ thống tự động chấm điểm độ tin cậy của câu trả lời dựa trên nội dung trích xuất (thang điểm 1-10).
+    \item \textbf{Deterministic Logic Extraction:} Sử dụng regex/bóc tách bằng quy tắc đối với các câu hỏi đếm tài liệu, nội dung bài tập, và đưa tài liệu tư vấn một cách rõ ràng.
+\end{enumerate}
+
+\section{Đánh giá và Thử nghiệm}
+Hệ thống tích hợp bảng đánh giá Benchmark so sánh các kích thước Chunk (Chunk strategies). Trong thực tế, hệ thống có hiệu năng tìm kiếm ổn định với độ trễ (latency) phụ thuộc chủ yếu vào cấu hình phần cứng chạy Ollama cục bộ. Fallback strategy được kích hoạt khi Ollama bị quá tải bộ nhớ.
+
+\end{document}

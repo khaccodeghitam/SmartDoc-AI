@@ -1,0 +1,84 @@
+"""Basic RAG Chain Manager. Thuần chủng LLM 1 shot."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from src.application.prompt_engineering import build_rag_prompt
+from src.data_layer.faiss_vector_store import load_faiss_index, search_similar_chunks
+from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
+from src.utils import source_name_from_path
+
+@dataclass
+class RAGAnswer:
+    answer: str
+    context_chunks: list[str]
+    prompt: str
+    confidence_score: int
+    raw_docs: list[Any]
+
+
+class RAGChainManager:
+    """Application layer orchestration for retrieval and generation (Basic RAG)."""
+
+    def __init__(self, index_dir: str, model_engine: OllamaInferenceEngine) -> None:
+        self.vector_store_idx = index_dir
+        self.model_engine = model_engine
+        self._faiss_store = None
+
+    def _get_faiss(self):
+        if self._faiss_store is None:
+            self._faiss_store = load_faiss_index(self.vector_store_idx)
+        return self._faiss_store
+
+    @staticmethod
+    def _format_context_chunks(documents: list[Any]) -> list[str]:
+        contexts: list[str] = []
+        for idx, doc in enumerate(documents, start=1):
+            content = (getattr(doc, "page_content", "") or "").strip()
+            if not content:
+                continue
+
+            metadata = dict(getattr(doc, "metadata", {}) or {})
+            source = str(metadata.get("source", ""))
+            file_name = source_name_from_path(source) or "unknown"
+            page = metadata.get("page", metadata.get("page_number", "n/a"))
+
+            header = f"[Đoạn trích từ file: {file_name} | Trang: {page}]"
+            contexts.append(f"{header}\n{content}".strip())
+
+        return contexts
+
+    def ask(self, question: str, top_k: int = 4) -> RAGAnswer:
+        question_text = question.strip()
+        if not question_text:
+            raise ValueError("Hãy nhập nội dung câu hỏi.")
+        if top_k < 1:
+            raise ValueError("top_k phải >= 1")
+
+        retrieved = search_similar_chunks(self.vector_store_idx, question_text, top_k=top_k)
+        contexts = self._format_context_chunks(retrieved)
+        
+        if not contexts:
+            return RAGAnswer(
+                answer="Không tìm thấy ngữ cảnh phù hợp trong tài liệu.",
+                context_chunks=[],
+                prompt="",
+                confidence_score=0,
+                raw_docs=[],
+            )
+
+        prompt = build_rag_prompt(question=question_text, contexts=contexts)
+        answer = self.model_engine.generate(prompt=prompt, question=question_text)
+        
+        confidence = self.model_engine.self_rag_confidence_score(
+            query=question_text, answer=answer, docs=retrieved
+        )
+
+        return RAGAnswer(
+            answer=answer, 
+            context_chunks=contexts, 
+            prompt=prompt, 
+            confidence_score=confidence,
+            raw_docs=retrieved
+        )

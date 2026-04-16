@@ -2,27 +2,35 @@ import unittest
 
 from langchain_core.documents import Document
 
-from app.rag_pipeline import (
-    _detect_unknown_source_reference,
-    _detect_source_filter_conflict,
-    _detect_sources_mentioned_in_query,
-    _extract_explicit_source_reference,
+from src.utils import (
+    detect_unknown_source_reference as _detect_unknown_source_reference,
+    detect_source_filter_conflict as _detect_source_filter_conflict,
+    detect_sources_mentioned_in_query as _detect_sources_mentioned_in_query,
+    extract_explicit_source_reference as _extract_explicit_source_reference,
+    resolve_effective_source_filter as _resolve_effective_source_filter,
+)
+from src.application.rag_chain_manager import (
     _extract_chapter_title_keyword,
     _extract_architecture_styles_from_text,
     _extract_en_numbered_exercises,
     _extract_vi_exercises,
     _is_exercise_count_query,
     _is_exercise_content_query,
-    _is_follow_up_query,
-    _is_probably_english_query,
     _is_architecture_style_count_query,
-    _resolve_effective_source_filter,
     _slice_text_by_chapter,
     _slice_text_by_chapter_title,
-    _build_context_for_scoring,
-    _should_include_history_in_prompt,
     _is_beginner_recommendation_query,
     _is_technology_suggestion_query,
+)
+from src.application.query_rewriter import (
+    is_follow_up_query as _is_follow_up_query,
+    should_include_history_in_prompt as _should_include_history_in_prompt,
+)
+from src.application.prompt_engineering import (
+    is_probably_english_query as _is_probably_english_query,
+)
+from src.model_layer.ollama_inference_engine import (
+    _build_context_for_scoring,
 )
 
 

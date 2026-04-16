@@ -1,3 +1,4 @@
+"""UI configuration and Streamlit styling components."""
 from __future__ import annotations
 
 import streamlit as st
@@ -234,7 +235,23 @@ html, body, [class*="css"] {
 
 [data-testid="stSidebar"] .stButton > button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 10px 22px rgba(31, 101, 204, 0.28);
+    box-shadow: 0 10px 22px rgba(31, 101, 204, 0.28) !important;
+    background: linear-gradient(140deg, #22467f, #1f65cc) !important; /* Slightly lighter for hover effect */
+    border: 1px solid rgba(118, 171, 255, 0.55) !important;
+    color: #ffffff !important;
+}
+
+[data-testid="stSidebar"] .stButton[data-testid*="tertiary"] > button {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    color: #e7f0ff !important;
+}
+
+[data-testid="stSidebar"] .stButton[data-testid*="tertiary"] > button:hover {
+    background: rgba(255, 60, 60, 0.25) !important;
+    border: 1px solid rgba(255, 90, 90, 0.4) !important;
+    transform: translateY(-1px);
 }
 
 .smartdoc-hero {
@@ -447,6 +464,27 @@ html, body, [class*="css"] {
     opacity: 1 !important;
 }
 
+/* Fix chat message text visibility */
+[data-testid="stChatMessage"] {
+    background: rgba(20, 30, 58, 0.75) !important;
+    border: 1px solid rgba(131, 160, 238, 0.25) !important;
+    border-radius: 14px !important;
+    margin-bottom: 0.5rem !important;
+}
+
+[data-testid="stChatMessage"] p,
+[data-testid="stChatMessage"] span,
+[data-testid="stChatMessage"] div,
+[data-testid="stChatMessage"] li {
+    color: #eef3ff !important;
+    -webkit-text-fill-color: #eef3ff !important;
+}
+
+/* User bubble - slightly different tint */
+[data-testid="stChatMessageUser"] [data-testid="stChatMessage"] {
+    background: rgba(31, 55, 115, 0.72) !important;
+}
+
 @media (max-width: 840px) {
     .smartdoc-title {
         font-size: 1.58rem;
@@ -511,26 +549,3 @@ def render_model_badge(model_name: str, is_fallback: bool, target=None) -> None:
         target.markdown(html, unsafe_allow_html=True)
         return
     st.sidebar.markdown(html, unsafe_allow_html=True)
-
-
-def render_sidebar_help() -> None:
-    st.sidebar.markdown("### Hướng dẫn nhanh")
-    st.sidebar.markdown(
-        """
-        1. Upload PDF/DOCX và build index.
-        2. Tùy chỉnh chunk size, top-k, filter tài liệu.
-        3. Hỏi đáp tại tab Q&A để xem câu trả lời + confidence.
-        4. Kiểm tra citation để đối soát nguồn.
-        """
-    )
-
-
-def render_sidebar_notes() -> None:
-    st.sidebar.markdown("### Ghi chú UI")
-    st.sidebar.markdown(
-        """
-        - Giao diện lấy cảm hứng từ dashboard của các AI chat app.
-        - Sidebar đóng vai trò control panel.
-        - Main area ưu tiên readability và source traceability.
-        """
-    )

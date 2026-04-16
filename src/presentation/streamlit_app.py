@@ -1,83 +1,55 @@
+"""Streamlit application entry point - Presentation Layer."""
 from __future__ import annotations
 
 from datetime import datetime
 import html
 import inspect
-import json
-from pathlib import Path
 import re
+from pathlib import Path
 
 import streamlit as st
 
-try:
-    from app.config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K, CHAT_HISTORY_DIR, OLLAMA_MODEL
-    from app import rag_pipeline as _rag_pipeline
-    from app.ui import (
-        apply_styles,
-        render_chip_row,
-        render_hero,
-        render_model_badge,
-        render_sidebar_header,
-        render_sidebar_help,
-        render_sidebar_notes,
-    )
-except (ModuleNotFoundError, ImportError):
-    from config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K, CHAT_HISTORY_DIR, OLLAMA_MODEL
-    import rag_pipeline as _rag_pipeline
-    from ui import (
-        apply_styles,
-        render_chip_row,
-        render_hero,
-        render_model_badge,
-        render_sidebar_header,
-        render_sidebar_help,
-        render_sidebar_notes,
-    )
+from src.config import APP_TITLE, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_TOP_K, OLLAMA_MODEL
+from src.data_layer.conversation_store import (
+    save_persistent_history, load_persistent_history,
+    save_app_session, load_app_session,
+)
+from src.data_layer.faiss_vector_store import (
+    clear_vector_store_data,
+    search_similar_chunks,
+    search_vector_only_chunks,
+)
+from src.application.document_processing_pipeline import (
+    ingest_multiple_uploaded_files,
+    evaluate_chunk_strategies,
+)
+from src.data_layer.faiss_vector_store import build_and_save_faiss_index
+from src.application.rag_chain_manager import RAGChainManager, RAGAnswer
+from src.application.corag_chain_manager import CoRAGChainManager, CoRAGAnswer
+from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
+from src.presentation.ui_config import (
+    apply_styles,
+    render_chip_row,
+    render_hero,
+    render_model_badge,
+    render_sidebar_header,
+)
 
 
-answer_question = _rag_pipeline.answer_question
-build_and_save_faiss_index = _rag_pipeline.build_and_save_faiss_index
-ingest_uploaded_file = _rag_pipeline.ingest_uploaded_file
-search_similar_chunks = _rag_pipeline.search_similar_chunks
-ingest_multiple_uploaded_files = _rag_pipeline.ingest_multiple_uploaded_files
-search_vector_only_chunks = getattr(_rag_pipeline, "search_vector_only_chunks", _rag_pipeline.search_similar_chunks)
-
-
-def _clear_vector_store_fallback(*_args, **_kwargs) -> dict[str, int]:
-    return {"index_deleted": 0, "raw_deleted": 0}
-
-
-def _chunk_eval_fallback(*_args, **_kwargs) -> list[dict]:
-    return []
-
-
-clear_vector_store_data = getattr(_rag_pipeline, "clear_vector_store_data", _clear_vector_store_fallback)
-evaluate_chunk_strategies = getattr(_rag_pipeline, "evaluate_chunk_strategies", _chunk_eval_fallback)
-HAS_CLEAR_VECTOR_STORE = hasattr(_rag_pipeline, "clear_vector_store_data")
-HAS_CHUNK_EVAL = hasattr(_rag_pipeline, "evaluate_chunk_strategies")
-
-
-def _save_persistent_history(history: list) -> None:
-    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    history_file = CHAT_HISTORY_DIR / "history.json"
-    try:
-        history_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), "utf-8")
-    except Exception as e:
-        print(f"Error saving chat history: {e}")
-
-
-def _load_persistent_history() -> list:
-    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    history_file = CHAT_HISTORY_DIR / "history.json"
-    if history_file.exists():
-        try:
-            return json.loads(history_file.read_text("utf-8"))
-        except Exception:
-            return []
-    return []
-
+# ---------------------------------------------------------------------------
+# State management
+# ---------------------------------------------------------------------------
 
 def _init_state() -> None:
+    # Restore persisted index session on fresh load (after F5)
+    if "last_index_dir" not in st.session_state:
+        saved = load_app_session()
+        st.session_state["last_index_dir"] = saved.get("last_index_dir", "")
+        st.session_state["last_index_name"] = saved.get("last_index_name", "")
+        st.session_state["last_uploaded_file"] = saved.get("last_uploaded_file", "")
+        st.session_state["available_sources"] = saved.get("available_sources", [])
+        st.session_state["available_file_types"] = saved.get("available_file_types", [])
+        st.session_state["available_upload_dates"] = saved.get("available_upload_dates", [])
     st.session_state.setdefault("last_index_dir", "")
     st.session_state.setdefault("last_index_name", "")
     st.session_state.setdefault("last_uploaded_file", "")
@@ -86,10 +58,12 @@ def _init_state() -> None:
     st.session_state.setdefault("last_bi_encoder_chunks", [])
     st.session_state.setdefault("last_vector_only_chunks", [])
     st.session_state.setdefault("last_query", "")
-    if "chat_history" not in st.session_state:
-        st.session_state["chat_history"] = _load_persistent_history()
+    if "chat_sessions" not in st.session_state:
+        st.session_state["chat_sessions"] = load_persistent_history()
+    st.session_state.setdefault("active_session_id", None)
+    st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("confirm_clear_status", False)
-    st.session_state.setdefault("confirm_clear_history", False)
+
     st.session_state.setdefault("sidebar_source_filter", [])
     st.session_state.setdefault("sidebar_file_type_filter", [])
     st.session_state.setdefault("sidebar_upload_date_filter", [])
@@ -102,7 +76,12 @@ def _init_state() -> None:
     st.session_state.setdefault("last_ingested_paths", [])
     st.session_state.setdefault("chunk_benchmark_rows", [])
     st.session_state.setdefault("pending_sidebar_filter_reset", False)
+    st.session_state.setdefault("sticky_fallbacks", [])
 
+
+# ---------------------------------------------------------------------------
+# UI helpers
+# ---------------------------------------------------------------------------
 
 def _card_start(title: str, subtitle: str | None = None) -> None:
     st.markdown('<div class="smartdoc-card">', unsafe_allow_html=True)
@@ -121,13 +100,11 @@ def _render_index_state() -> None:
     uploaded = st.session_state.get("last_uploaded_file") or "Chưa upload"
 
     st.markdown("### Trạng thái hiện tại")
-    render_chip_row(
-        [
-            f"File: {uploaded}",
-            f"Index: {index_name}",
-            f"Thư mục: {Path(index_dir).name if index_dir != 'Chưa lưu' else index_dir}",
-        ]
-    )
+    render_chip_row([
+        f"File: {uploaded}",
+        f"Index: {index_name}",
+        f"Thư mục: {Path(index_dir).name if index_dir != 'Chưa lưu' else index_dir}",
+    ])
 
 
 def _append_history(kind: str, detail: str) -> None:
@@ -137,18 +114,49 @@ def _append_history(kind: str, detail: str) -> None:
 
 
 def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
-    chat_history = st.session_state.get("chat_history", [])
-    chat_history.insert(
-        0,
-        {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "question": question,
-            "answer": answer,
-            "sources": sources,
-        },
-    )
-    st.session_state["chat_history"] = chat_history[:20]
-    _save_persistent_history(st.session_state["chat_history"])
+    # Handle chat sessions array
+    sessions = st.session_state.get("chat_sessions", [])
+    active_id = st.session_state.get("active_session_id")
+    
+    current_session = None
+    if active_id:
+        for s in sessions:
+            if s.get("session_id") == active_id:
+                current_session = s
+                break
+                
+    if not current_session:
+        import uuid
+        current_session = {
+            "session_id": str(uuid.uuid4()),
+            "title": question[:45] + ("..." if len(question) > 45 else ""),
+            "timestamp": datetime.now().strftime("%d/%m/%Y - %H:%M"),
+            "history": [],
+            "rag_state": {
+                "last_index_dir": st.session_state.get("last_index_dir", ""),
+                "last_index_name": st.session_state.get("last_index_name", ""),
+                "last_uploaded_file": st.session_state.get("last_uploaded_file", ""),
+                "available_sources": st.session_state.get("available_sources", []),
+                "available_file_types": st.session_state.get("available_file_types", []),
+                "available_upload_dates": st.session_state.get("available_upload_dates", []),
+            }
+        }
+        sessions.insert(0, current_session)
+        st.session_state["active_session_id"] = current_session["session_id"]
+        st.session_state["chat_sessions"] = sessions
+
+    # Append to active session's history
+    history_arr = current_session.setdefault("history", [])
+    history_arr.insert(0, {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "question": question,
+        "answer": answer,
+        "sources": sources,
+    })
+    
+    # Sync visual flat chat history for UI rendering
+    st.session_state["chat_history"] = history_arr[:50]
+    save_persistent_history(sessions)
 
 
 def _highlight_context_snippet(text: str, query: str) -> tuple[str, int]:
@@ -179,6 +187,11 @@ def _to_user_error_message(exc: Exception, stage: str) -> str:
     raw = str(exc).strip()
     text = raw.lower()
 
+    if "paging file is too small" in text or "os error 1455" in text:
+        return (
+            "Máy đang thiếu bộ nhớ ảo khi nạp model embedding. "
+            "Hãy đóng bớt ứng dụng nặng hoặc tăng Virtual Memory (Paging File) của Windows, rồi ingest lại."
+        )
     if "unsupported file type" in text:
         return "Định dạng file không được hỗ trợ. Vui lòng dùng PDF hoặc DOCX."
     if "no chunks available" in text or "empty" in text:
@@ -190,11 +203,7 @@ def _to_user_error_message(exc: Exception, stage: str) -> str:
     if "faiss" in text or "index" in text:
         return "Có lỗi khi đọc/tạo FAISS index. Vui lòng ingest lại tài liệu."
 
-    stage_map = {
-        "ingest": "xử lý tài liệu",
-        "retrieve": "truy xuất dữ liệu",
-        "qa": "hỏi đáp với mô hình",
-    }
+    stage_map = {"ingest": "xử lý tài liệu", "retrieve": "truy xuất dữ liệu", "qa": "hỏi đáp với mô hình"}
     stage_text = stage_map.get(stage, "xử lý yêu cầu")
     return f"Đã xảy ra lỗi khi {stage_text}. Chi tiết: {raw or type(exc).__name__}"
 
@@ -270,22 +279,71 @@ def _render_sources(sources: list[dict], query: str) -> None:
 
 
 def _render_chat_sidebar() -> None:
-    st.sidebar.markdown("### Lịch sử chat")
-    chat_history = st.session_state.get("chat_history", [])
-    if not chat_history:
-        st.sidebar.caption("Chưa có hội thoại nào.")
+    st.markdown("### Lịch sử cuộc trò chuyện")
+    
+    if st.button("➕ Cuộc trò chuyện mới", type="primary", use_container_width=True, key="btn_new_session"):
+        st.session_state["active_session_id"] = None
+        st.session_state["chat_history"] = []
+        st.rerun()
+        
+    sessions = st.session_state.get("chat_sessions", [])
+    if not sessions:
+        st.caption("Chưa có đoạn chat nào.")
         return
 
-    for item in chat_history[:8]:
-        st.sidebar.markdown(f"- **{item['time']}**: {item['question'][:45]}")
+    st.markdown("---")
+    
+    # Render interactive chat sessions list
+    for session in sessions:
+        col1, col2 = st.columns([4, 1])
+        is_active = session.get("session_id") == st.session_state.get("active_session_id")
+        button_type = "primary" if is_active else "secondary"
+        
+        with col1:
+            if st.button(f"💬 {session['title']}\n\n{session['timestamp']}", key=f"sess_{session['session_id']}", use_container_width=True, type=button_type):
+                st.session_state["active_session_id"] = session["session_id"]
+                st.session_state["chat_history"] = session.get("history", [])
+                
+                # Khôi phục trạng thái RAG của riêng đoạn chat này
+                rs = session.get("rag_state", {})
+                if rs:
+                    st.session_state["last_index_dir"] = rs.get("last_index_dir", "")
+                    st.session_state["last_index_name"] = rs.get("last_index_name", "")
+                    st.session_state["last_uploaded_file"] = rs.get("last_uploaded_file", "")
+                    st.session_state["available_sources"] = rs.get("available_sources", [])
+                    st.session_state["available_file_types"] = rs.get("available_file_types", [])
+                    st.session_state["available_upload_dates"] = rs.get("available_upload_dates", [])
+                    
+                    # Cập nhật cả "hộp đen" F5 persistence để khớp với đoạn chat đang chọn
+                    from src.data_layer.conversation_store import save_app_session
+                    save_app_session(
+                        index_dir=st.session_state["last_index_dir"],
+                        index_name=st.session_state["last_index_name"],
+                        uploaded_file=st.session_state["last_uploaded_file"],
+                        sources=st.session_state["available_sources"],
+                        file_types=st.session_state["available_file_types"],
+                        upload_dates=st.session_state["available_upload_dates"],
+                    )
+                st.rerun()
+        with col2:
+            if st.button("🗑️", key=f"del_{session['session_id']}", help="Xóa lịch sử trò chuyện này", type="tertiary"):
+                sessions.remove(session)
+                if is_active:
+                    st.session_state["active_session_id"] = None
+                    st.session_state["chat_history"] = []
+                st.session_state["chat_sessions"] = sessions
+                save_persistent_history(sessions)
+                st.rerun()
 
+
+# ---------------------------------------------------------------------------
+# Main application
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
     _init_state()
 
-    # Streamlit does not allow changing widget-bound session keys after widget creation.
-    # Defer sidebar filter resets to the next run and apply them before sidebar widgets render.
     if st.session_state.get("pending_sidebar_filter_reset", False):
         st.session_state["sidebar_source_filter"] = []
         st.session_state["sidebar_file_type_filter"] = []
@@ -293,11 +351,6 @@ def main() -> None:
         st.session_state["pending_sidebar_filter_reset"] = False
 
     apply_styles()
-    if not HAS_CLEAR_VECTOR_STORE or not HAS_CHUNK_EVAL:
-        st.warning(
-            "Đang chạy ở chế độ tương thích do module rag_pipeline chưa nạp đủ symbol mới. "
-            "Hãy restart app để kích hoạt đầy đủ tính năng mới."
-        )
     render_hero()
 
     with st.sidebar:
@@ -308,31 +361,12 @@ def main() -> None:
             is_fallback=st.session_state.get("is_fallback_model", False),
             target=model_badge_slot,
         )
-        render_sidebar_help()
 
         st.markdown("### Cấu hình ingest")
         uploaded_files = st.file_uploader("Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)", type=["pdf", "docx"], accept_multiple_files=True)
-        chunk_size = st.number_input(
-            "Chunk size",
-            min_value=200,
-            max_value=4000,
-            value=DEFAULT_CHUNK_SIZE,
-            step=100,
-        )
-        chunk_overlap = st.number_input(
-            "Chunk overlap",
-            min_value=0,
-            max_value=1000,
-            value=DEFAULT_CHUNK_OVERLAP,
-            step=20,
-        )
-        top_k = st.number_input(
-            "Top-k search",
-            min_value=1,
-            max_value=10,
-            value=DEFAULT_TOP_K,
-            step=1,
-        )
+        chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=DEFAULT_CHUNK_SIZE, step=100)
+        chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=DEFAULT_CHUNK_OVERLAP, step=20)
+        top_k = st.number_input("Top-k search", min_value=1, max_value=10, value=DEFAULT_TOP_K, step=1)
 
         available_sources_sidebar = st.session_state.get("available_sources", [])
         available_file_types_sidebar = st.session_state.get("available_file_types", [])
@@ -341,27 +375,15 @@ def main() -> None:
         sidebar_file_type_filter = None
         sidebar_upload_date_filter = None
         if available_sources_sidebar:
-            sidebar_source_filter = st.multiselect(
-                "Filter tài liệu mặc định",
-                options=available_sources_sidebar,
-                key="sidebar_source_filter",
-            )
+            sidebar_source_filter = st.multiselect("Filter tài liệu mặc định", options=available_sources_sidebar, key="sidebar_source_filter")
         if available_file_types_sidebar:
-            sidebar_file_type_filter = st.multiselect(
-                "Filter loại file",
-                options=available_file_types_sidebar,
-                key="sidebar_file_type_filter",
-            )
+            sidebar_file_type_filter = st.multiselect("Filter loại file", options=available_file_types_sidebar, key="sidebar_file_type_filter")
         if available_upload_dates_sidebar:
-            sidebar_upload_date_filter = st.multiselect(
-                "Filter ngày upload",
-                options=available_upload_dates_sidebar,
-                key="sidebar_upload_date_filter",
-            )
+            sidebar_upload_date_filter = st.multiselect("Filter ngày upload", options=available_upload_dates_sidebar, key="sidebar_upload_date_filter")
 
         st.markdown("---")
-        render_sidebar_notes()
 
+        # Clear vector store
         if not st.session_state["confirm_clear_status"]:
             if st.button("Clear Vector Store + trạng thái"):
                 st.session_state["confirm_clear_status"] = True
@@ -396,21 +418,7 @@ def main() -> None:
                 st.session_state["confirm_clear_status"] = False
                 st.rerun()
 
-        if not st.session_state["confirm_clear_history"]:
-            if st.button("Xóa lịch sử chat"):
-                st.session_state["confirm_clear_history"] = True
-                st.rerun()
-        else:
-            st.warning("Bạn chắn chắn muốn xóa toàn bộ lịch sử chat?")
-            col_y_chat, col_n_chat = st.columns(2)
-            if col_y_chat.button("Đồng ý xóa", key="yes_clear_chat"):
-                st.session_state["chat_history"] = []
-                _save_persistent_history([])
-                st.session_state["confirm_clear_history"] = False
-                st.rerun()
-            if col_n_chat.button("Hủy", key="no_clear_chat"):
-                st.session_state["confirm_clear_history"] = False
-                st.rerun()
+
 
         st.markdown("---")
         _render_chat_sidebar()
@@ -424,16 +432,11 @@ def main() -> None:
     col3.metric("UI layer", "Streamlit")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    tab_upload, tab_retrieve, tab_qa, tab_history = st.tabs(
-        [
-            "1. Upload & Index",
-            "2. Retrieval Demo",
-            "3. Q&A với LLM",
-            "4. Lịch sử & Ghi chú",
-        ]
-    )
+    tab_upload, tab_retrieve, tab_qa, tab_history = st.tabs([
+        "1. Upload & Index", "2. Retrieval Demo", "3. Q&A với LLM", "4. Lịch sử & Ghi chú",
+    ])
 
-    with tab_upload: 
+    with tab_upload:
         left, right = st.columns([1.25, 0.9], gap="large")
 
         with left:
@@ -480,35 +483,22 @@ def main() -> None:
                         st.session_state["last_vector_only_chunks"] = []
                         st.session_state["last_query"] = ""
 
-                        sources = sorted(
-                            {
-                                Path(str(chunk.metadata.get("source", "unknown"))).name
-                                for chunk in ingest_result.chunks
-                                if chunk.metadata
-                            }
-                        )
-                        file_types = sorted(
-                            {
-                                str(chunk.metadata.get("file_type", "")).lower().lstrip(".")
-                                for chunk in ingest_result.chunks
-                                if chunk.metadata and chunk.metadata.get("file_type")
-                            }
-                        )
-                        upload_dates = sorted(
-                            {
-                                str(chunk.metadata.get("upload_date", "")).strip()
-                                for chunk in ingest_result.chunks
-                                if chunk.metadata and chunk.metadata.get("upload_date")
-                            },
-                            reverse=True,
-                        )
-                        ingested_paths = sorted(
-                            {
-                                str(chunk.metadata.get("source", ""))
-                                for chunk in ingest_result.chunks
-                                if chunk.metadata and chunk.metadata.get("source")
-                            }
-                        )
+                        sources = sorted({
+                            Path(str(chunk.metadata.get("source", "unknown"))).name
+                            for chunk in ingest_result.chunks if chunk.metadata
+                        })
+                        file_types = sorted({
+                            str(chunk.metadata.get("file_type", "")).lower().lstrip(".")
+                            for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("file_type")
+                        })
+                        upload_dates = sorted({
+                            str(chunk.metadata.get("upload_date", "")).strip()
+                            for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("upload_date")
+                        }, reverse=True)
+                        ingested_paths = sorted({
+                            str(chunk.metadata.get("source", ""))
+                            for chunk in ingest_result.chunks if chunk.metadata and chunk.metadata.get("source")
+                        })
 
                         st.session_state["available_sources"] = sources
                         st.session_state["available_file_types"] = file_types
@@ -517,10 +507,17 @@ def main() -> None:
                         st.session_state["pending_sidebar_filter_reset"] = True
                         st.session_state["chunk_benchmark_rows"] = []
 
-                        _append_history(
-                            "index",
-                            f"Multi docs ({len(uploaded_files)}) -> {ingest_result.chunks_count} chunks -> {index_result.index_name}",
+                        # Lưu trạng thái index xuống file để khôi phục khi F5
+                        save_app_session(
+                            index_dir=str(index_result.index_dir),
+                            index_name=index_result.index_name,
+                            uploaded_file=file_names,
+                            sources=sources,
+                            file_types=file_types,
+                            upload_dates=upload_dates,
                         )
+
+                        _append_history("index", f"Multi docs ({len(uploaded_files)}) -> {ingest_result.chunks_count} chunks -> {index_result.index_name}")
                         st.session_state["ingest_notice"] = (
                             f"Ingest hoàn tất: {ingest_result.raw_docs_count} docs, "
                             f"{ingest_result.chunks_count} chunks, index {index_result.index_name}"
@@ -587,10 +584,8 @@ def main() -> None:
 
                     with st.spinner("Đang benchmark chunk strategy..."):
                         rows = evaluate_chunk_strategies(
-                            file_paths=ingested_paths,
-                            query=eval_query.strip(),
-                            strategies=strategies,
-                            top_k=int(top_k),
+                            file_paths=ingested_paths, query=eval_query.strip(),
+                            strategies=strategies, top_k=int(top_k),
                         )
                     st.session_state["chunk_benchmark_rows"] = rows
 
@@ -610,10 +605,9 @@ def main() -> None:
                 query = st.text_area(
                     "Nhập câu hỏi để test retrieval",
                     placeholder="Ví dụ: FAISS là gì? hoặc Tài liệu này nói gì về giao diện?",
-                    height=120,
-                    key="retrieval_query",
+                    height=120, key="retrieval_query",
                 )
-                
+
                 if st.button("Tìm chunks liên quan", key="retrieve_button", disabled=not query.strip()):
                     try:
                         with st.spinner("Đang search bằng Hybrid Search (FAISS + BM25)..."):
@@ -624,32 +618,20 @@ def main() -> None:
                             if effective_filter and len(effective_filter) > 0:
                                 effective_top_k = int(top_k) * len(effective_filter)
                             docs = _call_with_supported_kwargs(
-                                search_similar_chunks,
-                                index_dir=last_index_dir,
-                                query=query,
-                                top_k=effective_top_k,
-                                source_filter=effective_filter,
-                                file_type_filter=effective_type_filter,
-                                upload_date_filter=effective_date_filter,
+                                search_similar_chunks, index_dir=last_index_dir, query=query,
+                                top_k=effective_top_k, source_filter=effective_filter,
+                                file_type_filter=effective_type_filter, upload_date_filter=effective_date_filter,
                             )
                             bi_encoder_docs = _call_with_supported_kwargs(
-                                search_similar_chunks,
-                                index_dir=last_index_dir,
-                                query=query,
-                                top_k=effective_top_k,
-                                source_filter=effective_filter,
-                                file_type_filter=effective_type_filter,
-                                upload_date_filter=effective_date_filter,
+                                search_similar_chunks, index_dir=last_index_dir, query=query,
+                                top_k=effective_top_k, source_filter=effective_filter,
+                                file_type_filter=effective_type_filter, upload_date_filter=effective_date_filter,
                                 use_rerank=False,
                             )
                             vector_only_docs = _call_with_supported_kwargs(
-                                search_vector_only_chunks,
-                                index_dir=last_index_dir,
-                                query=query,
-                                top_k=effective_top_k,
-                                source_filter=effective_filter,
-                                file_type_filter=effective_type_filter,
-                                upload_date_filter=effective_date_filter,
+                                search_vector_only_chunks, index_dir=last_index_dir, query=query,
+                                top_k=effective_top_k, source_filter=effective_filter,
+                                file_type_filter=effective_type_filter, upload_date_filter=effective_date_filter,
                             )
                     except Exception as exc:
                         st.error(_to_user_error_message(exc, stage="retrieve"))
@@ -678,9 +660,7 @@ def main() -> None:
             bi_encoder_chunks = st.session_state.get("last_bi_encoder_chunks", [])
             vector_chunks = st.session_state.get("last_vector_only_chunks", [])
             if hybrid_chunks or bi_encoder_chunks or vector_chunks:
-                tab_hybrid, tab_bi, tab_vector = st.tabs(
-                    ["Hybrid + CrossEncoder", "Hybrid Bi-encoder", "Vector-only Baseline"]
-                )
+                tab_hybrid, tab_bi, tab_vector = st.tabs(["Hybrid + CrossEncoder", "Hybrid Bi-encoder", "Vector-only Baseline"])
                 with tab_hybrid:
                     if hybrid_chunks:
                         for idx, doc in enumerate(hybrid_chunks, start=1):
@@ -704,109 +684,117 @@ def main() -> None:
             _card_end()
 
     with tab_qa:
-        left, right = st.columns([1.0, 1.0], gap="large")
+        _card_start("Bước 3: Giao diện so sánh - Basic RAG vs Co-RAG", "Hiển thị cách LLM lấy thông tin và tự suy luận đa bước.")
+        last_index_dir = st.session_state.get("last_index_dir")
+        
+        # Luon hien thi lich su trao doi cua phien chat dang chon (ngay ca khi chua co index)
+        current_history = st.session_state.get("chat_history", [])
+        if current_history:
+            st.markdown("##### Lich su trao doi")
+            for item in reversed(current_history):
+                with st.chat_message("user"):
+                    st.write(item["question"])
+                with st.chat_message("assistant"):
+                    st.markdown(item.get("answer", ""))
+            st.markdown("---")
 
-        with left:
-            _card_start("Bước 3: Hỏi đáp với LLM", "Retrieval Hybrid kết hợp cùng Qwen2.5 (ưu tiên model nhẹ theo RAM máy).")
-            last_index_dir = st.session_state.get("last_index_dir")
-            if last_index_dir:
-                qa_query = st.text_area(
-                    "Nhập câu hỏi",
-                    placeholder="Ví dụ: Tài liệu yêu cầu gì về giao diện người dùng?",
-                    height=120,
-                    key="qa_query",
-                )
-                
-                if st.button("Trả lời bằng LLM", type="primary", key="qa_button"):
-                    if not qa_query.strip():
-                        st.warning("Vui lòng nhập câu hỏi trước khi gửi.")
-                    else:
-                        try:
-                            with st.spinner("Đang truy xuất nguồn (Hybrid Search) và sinh câu trả lời..."):
-                                effective_filter = sidebar_source_filter if sidebar_source_filter else None
-                                effective_type_filter = sidebar_file_type_filter if sidebar_file_type_filter else None
-                                effective_date_filter = sidebar_upload_date_filter if sidebar_upload_date_filter else None
-                                rag_result = _call_with_supported_kwargs(
-                                    answer_question,
-                                    index_dir=last_index_dir,
-                                    query=qa_query.strip(),
-                                    top_k=int(top_k),
-                                    chat_history=st.session_state.get("chat_history", []),
-                                    source_filter=effective_filter,
-                                    file_type_filter=effective_type_filter,
-                                    upload_date_filter=effective_date_filter,
-                                )
-                        except Exception as exc:
-                            st.error(_to_user_error_message(exc, stage="qa"))
-                            _append_history("error", f"QA failed: {type(exc).__name__}")
-                        else:
-                            st.session_state["active_model"] = rag_result.model_used
-                            st.session_state["is_fallback_model"] = rag_result.is_fallback
-                            model_badge_slot.empty()
-                            render_model_badge(
-                                model_name=st.session_state.get("active_model", OLLAMA_MODEL),
-                                is_fallback=st.session_state.get("is_fallback_model", False),
-                                target=model_badge_slot,
-                            )
-
-                            st.session_state["last_query"] = qa_query.strip()
-                            _append_history("qa", qa_query.strip())
-                            _append_chat(
-                                question=qa_query.strip(),
-                                answer=rag_result.answer,
-                                sources=rag_result.sources,
-                            )
-
-                            st.success("Đã sinh câu trả lời")
-                            st.markdown("#### Câu trả lời")
-                            st.write(rag_result.answer)
-                            _render_sources(rag_result.sources, qa_query.strip())
-            else:
+        if not last_index_dir:
+            if not current_history:
                 st.warning("Chưa có index trong session. Hãy upload và tạo FAISS index trước.")
             _card_end()
+        else:
+            qa_query = st.text_area(
+                "Nhập câu hỏi", placeholder="Ví dụ: Có bao nhiêu bài tập trong tài liệu này?",
+                height=80, key="qa_query",
+            )
 
-        with right:
-            _card_start("Lịch sử hội thoại gần đây", "Hiển thị câu hỏi, câu trả lời và nguồn đã dùng.")
-            chat_history = st.session_state.get("chat_history", [])
-            if not chat_history:
-                st.info("Chưa có hội thoại nào. Hãy gửi câu hỏi ở khung bên trái.")
-            else:
-                for idx, item in enumerate(chat_history[:5], start=1):
-                    st.markdown(f"#### #{idx} - {item['time']}")
-                    st.markdown(f"**Q:** {item['question']}")
-                    st.markdown(f"**A:** {item['answer']}")
-                    if item.get("sources"):
-                        st.caption("Nguồn: " + ", ".join(s["id"] for s in item["sources"]))
-                    st.markdown("---")
+            if st.button("Tranh luận / So sánh AI", type="primary", key="qa_button"):
+                if not qa_query.strip():
+                    st.warning("Vui lòng nhập câu hỏi trước khi gửi.")
+                else:
+                    col_rag, col_corag = st.columns(2)
+                    
+                    # Khởi tạo model engine dùng chung
+                    model_engine = OllamaInferenceEngine(model_name=st.session_state.get("active_model", OLLAMA_MODEL))
+                    manager = RAGChainManager(index_dir=last_index_dir, model_engine=model_engine)
+                    co_manager = CoRAGChainManager(index_dir=last_index_dir, model_engine=model_engine, top_k=int(top_k))
+                    
+                    rag_ans, rag_err = None, None
+                    corag_ans, corag_err = None, None
+                    
+                    with col_rag:
+                        st.markdown("### 🤖 Basic RAG")
+                        st.caption("Sinh câu trả lời với 1 shot context duy nhất.")
+                        rag_placeholder = st.empty()
+                        rag_placeholder.info("⏳ Đang chạy RAG cơ bản...")
+                        
+                    with col_corag:
+                        st.markdown("### 🧠 Co-RAG (Advanced)")
+                        st.caption("LLM tự đánh giá, đẻ thêm query và lấy thêm ngữ cảnh.")
+                        corag_placeholder = st.empty()
+                        corag_placeholder.info("⏳ Đang chạy lặp Co-RAG...")
+                        
+                    # Chạy tuần tự để tránh sập RAM (Memory Error), nhưng UI vẫn báo cả 2 đang chạy
+                    try:
+                        rag_ans = manager.ask(question=qa_query, top_k=int(top_k))
+                    except Exception as e:
+                        rag_err = e
+                        
+                    with col_rag:
+                        rag_placeholder.empty()
+                        if rag_err:
+                            st.error(f"Lỗi RAG: {rag_err}")
+                        elif rag_ans:
+                            st.success("Hoàn tất Basic RAG")
+                            st.markdown(f"**Câu trả lời:**\n\n{rag_ans.answer}")
+                            st.caption(f"Độ tự tin: {rag_ans.confidence_score}/10")
+                            st.caption(f"Trình biên dịch LLM: `{model_engine.model_name}`")
+                            with st.expander("Ngữ cảnh đã dùng"):
+                                st.write("\n\n---\n\n".join(rag_ans.context_chunks))
+                                
+                    try:
+                        corag_ans = co_manager.ask(question=qa_query)
+                    except Exception as e:
+                        corag_err = e
+                        
+                    with col_corag:
+                        corag_placeholder.empty()
+                        if corag_err:
+                            st.error(f"Lỗi Co-RAG: {corag_err}")
+                        elif corag_ans:
+                            st.success(f"Hoàn tất (Trải qua {corag_ans.total_rounds} vòng)")
+                            st.markdown(f"**Câu trả lời:**\n\n{corag_ans.answer}")
+                            st.caption(f"Độ tự tin: {corag_ans.confidence_score}/10")
+                            st.caption(f"Trình biên dịch LLM: `{model_engine.model_name}`")
+                            
+                            for it_idx, iteration in enumerate(corag_ans.iterations, start=1):
+                                with st.expander(f"Vòng {it_idx} | Đánh giá & Sub-query"):
+                                    st.markdown(f"**Ý kiến LLM:** {iteration.llm_assessment or 'Không có (Vòng đánh giá/Cuối)'}")
+                                    st.markdown(f"**Sub-query tạo ra:** `{iteration.sub_query}`")
+                                    st.markdown(f"**Chunks kéo về:** {len(iteration.retrieved_chunks)} chunks")
+                                
+                    # Ghi nhận lịch sử chat để tạo và lưu session mới
+                    if rag_ans or corag_ans:
+                        final_ans = corag_ans.answer if corag_ans else rag_ans.answer
+                        _append_chat(question=qa_query, answer=final_ans, sources=[])
+                        
+                        # Sau khi _append_chat xong, st.rerun() sẽ tự động cập nhật lại sidebar
+                        # không cần gọi _render_chat_sidebar() thủ công để tránh lỗi duplicate ID
+                        
+                    _append_history("qa", qa_query.strip())
             _card_end()
 
     with tab_history:
-        left, right = st.columns([0.95, 1.05], gap="large")
-
-        with left:
-            _card_start("Lịch sử thao tác", "Những hành động gần nhất của người dùng trong phiên hiện tại.")
-            history = st.session_state.get("retrieval_history", [])
-            if history:
-                for item in history:
-                    st.markdown(f"- **{item['kind']}**: {item['detail']}")
-            else:
-                st.write("Chưa có lịch sử nào.")
-            _card_end()
-
-        with right:
-            _card_start("Ghi chú triển khai giao diện", "Những điểm đang bám sát assignment và chỗ có thể mở rộng.")
-            st.markdown(
-                """
-                - **Streamlit** là lớp frontend chính theo định hướng assignment.
-                - **HTML/CSS** được dùng như lớp bổ sung để làm đẹp giao diện.
-                - Có thể mở rộng thêm citation, chat history, clear history và preview nguồn.
-                - Khi triển khai Q&A đầy đủ, khung UI hiện tại đã sẵn sàng cho câu hỏi và câu trả lời.
-                """
-            )
-            _card_end()
+        _card_start("Lịch sử thao tác", "Những hành động gần nhất của người dùng trong phiên hiện tại.")
+        history = st.session_state.get("retrieval_history", [])
+        if history:
+            for item in history:
+                st.markdown(f"- **{item['kind']}**: {item['detail']}")
+        else:
+            st.write("Chưa có lịch sử nào.")
+        _card_end()
 
     st.markdown('<hr class="smartdoc-divider" />', unsafe_allow_html=True)
-    st.caption("Đã bật đầy đủ: DOCX, history, clear data, chunk benchmark, citation click-highlight, conversational multi-hop RAG, hybrid vs vector-only, metadata filtering, rerank và self-rag confidence.")
 
 
 if __name__ == "__main__":

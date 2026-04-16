@@ -1,6 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
+.vscode/
+*.log
+streamlit*.log
+chunks_out.txt
+out_filter.txt
 .env
 .streamlit/secrets.toml
 .streamlit/*.toml
