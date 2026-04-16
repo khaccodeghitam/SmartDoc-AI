@@ -160,6 +160,29 @@ html, body, [class*="css"] {
     border: 1px solid rgba(126, 154, 230, 0.52) !important;
 }
 
+/* Sidebar expand/collapse control: keep the arrow clearly visible */
+[data-testid="collapsedControl"],
+[data-testid="collapsedControl"] button,
+[data-testid="collapsedControl"] svg,
+[data-testid="collapsedControl"] path,
+[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"] *,
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+[data-testid="stHeader"] button[aria-label*="sidebar"],
+[data-testid="stHeader"] button[aria-label*="Sidebar"] {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+}
+
+[data-testid="collapsedControl"] button:hover,
+[data-testid="stExpandSidebarButton"]:hover,
+[data-testid="stExpandSidebarButton"]:hover *,
+[data-testid="stHeader"] button[aria-label*="sidebar"]:hover,
+[data-testid="stHeader"] button[aria-label*="Sidebar"]:hover {
+    background: rgba(255, 255, 255, 0.10) !important;
+}
+
 [data-testid="stSidebar"] [data-testid="stFileUploader"] svg {
     fill: #d9e7ff !important;
 }
