@@ -433,7 +433,7 @@ def main() -> None:
         ]
     )
 
-    with tab_upload:
+    with tab_upload: 
         left, right = st.columns([1.25, 0.9], gap="large")
 
         with left:

@@ -563,8 +563,35 @@ def _extract_explicit_source_reference(query: str) -> str | None:
         "chapter",
     }
     pronouns = {"do", "nay", "kia", "ay", "no"}
+    generic_tail_starters = {
+        "nao",
+        "co",
+        "la",
+        "gi",
+        "hien",
+        "dang",
+        "da",
+        "tren",
+        "duoi",
+        "khac",
+        "nay",
+        "do",
+        "kia",
+        "ay",
+    }
 
     def collect_tail(start_index: int) -> str | None:
+        tail_tokens = [token for token in tokens[start_index:] if token]
+        if not tail_tokens:
+            return None
+
+        first_token = tail_tokens[0]
+        second_token = tail_tokens[1] if len(tail_tokens) > 1 else ""
+        if first_token in pronouns or first_token in generic_tail_starters:
+            return None
+        if (first_token, second_token) in {("hien", "co"), ("dang", "loc"), ("da", "nap")}:
+            return None
+
         collected: list[str] = []
         for token in tokens[start_index:]:
             if token in stop_tokens and collected:
@@ -1117,6 +1144,12 @@ def _build_prompt(query: str, docs: list[Document], chat_history: list[dict] | N
     )
 
 
+def _should_include_history_in_prompt(query: str, used_rewrite: bool) -> bool:
+    if used_rewrite:
+        return True
+    return _is_follow_up_query(query)
+
+
 def _is_architecture_style_count_query(query: str) -> bool:
     q = _normalize_for_match(query)
     has_target = (
@@ -1186,6 +1219,154 @@ def _deterministic_architecture_style_map(
             result[source_name] = styles
 
     return result
+
+
+def _is_beginner_recommendation_query(query: str) -> bool:
+    q = _normalize_for_match(query)
+    if not q:
+        return False
+    if "tai lieu nao" not in q and "document" not in q:
+        return False
+
+    markers = ["phu hop", "hoc truoc", "nguoi moi", "vi sao", "nen hoc"]
+    return any(marker in q for marker in markers)
+
+
+def _is_technology_suggestion_query(query: str) -> bool:
+    q = _normalize_for_match(query)
+    if not q:
+        return False
+
+    markers = [
+        "goi y cong nghe",
+        "thu vien",
+        "cong nghe",
+        "library",
+        "framework",
+        "stack",
+        "technology",
+        "api",
+    ]
+    intent_markers = ["nao", "dang chu y", "de xuat", "goi y", "co", "listed", "suggest"]
+    return any(marker in q for marker in markers) and any(intent in q for intent in intent_markers)
+
+
+def _collect_source_paths(all_docs: list[Document], source_filter: list[str] | None) -> list[str]:
+    source_paths = sorted(
+        {
+            str((doc.metadata or {}).get("source", ""))
+            for doc in all_docs
+            if (doc.metadata or {}).get("source")
+        }
+    )
+    if not source_filter:
+        return source_paths
+    return [source for source in source_paths if _source_matches_filter(source, source_filter)]
+
+
+def _count_terms(text: str, terms: list[str]) -> int:
+    normalized_text = _normalize_for_match(text)
+    return sum(normalized_text.count(_normalize_for_match(term)) for term in terms)
+
+
+def _build_beginner_recommendation_answer(
+    all_docs: list[Document],
+    source_filter: list[str] | None,
+) -> str:
+    beginner_terms = ["huong dan", "buoc", "luu y", "bai tap 1", "vi du"]
+    advanced_terms = ["api", "http", "retrofit", "okhttp", "socket", "tcp", "rss", "json", "google maps"]
+
+    scored_rows: list[tuple[float, str, int, int, int]] = []
+    for source_path in _collect_source_paths(all_docs, source_filter):
+        full_text = _read_full_text_from_source(source_path)
+        if not full_text:
+            continue
+        beginner_hits = _count_terms(full_text, beginner_terms)
+        advanced_hits = _count_terms(full_text, advanced_terms)
+        exercises = _extract_exercises_from_text(full_text)
+        exercise_count = len(exercises)
+        score = float(beginner_hits) - (0.6 * float(advanced_hits)) - (0.4 * max(0, exercise_count - 3))
+        scored_rows.append((score, _source_name_from_path(source_path) or source_path, beginner_hits, advanced_hits, exercise_count))
+
+    if not scored_rows:
+        return "Không đủ dữ liệu để đưa ra gợi ý tài liệu học trước trong phạm vi tài liệu đã lọc."
+
+    scored_rows.sort(key=lambda item: item[0], reverse=True)
+    best = scored_rows[0]
+
+    lines = [
+        f"Tài liệu phù hợp để bắt đầu cho người mới là: {best[1]}",
+        "",
+        "Lý do:",
+        f"- Mật độ hướng dẫn cơ bản cao hơn (Huong dan/Buoc/Vi du): {best[2]}",
+        f"- Mật độ từ khóa kỹ thuật nâng cao thấp hơn tương đối: {best[3]}",
+        f"- Số bài tập trong tài liệu: {best[4]}",
+    ]
+
+    if len(scored_rows) > 1:
+        lines.append("")
+        lines.append("Tham khảo nhanh các tài liệu còn lại (điểm phù hợp giảm dần):")
+        for score, source_name, beginner_hits, advanced_hits, exercise_count in scored_rows[1:4]:
+            lines.append(
+                f"- {source_name}: score={score:.1f}, huong_dan={beginner_hits}, ky_thuat={advanced_hits}, so_bai={exercise_count}"
+            )
+
+    lines.append("")
+    lines.append("[Deterministic Advisory] Gợi ý dựa trên mật độ hướng dẫn và độ phức tạp kỹ thuật trong toàn văn bản tài liệu.")
+    return "\n".join(lines)
+
+
+def _build_technology_suggestion_answer(
+    all_docs: list[Document],
+    source_filter: list[str] | None,
+) -> str:
+    tech_terms = [
+        "Google Maps API",
+        "OpenWeatherMap API",
+        "Retrofit",
+        "OkHttp",
+        "RecyclerView",
+        "RSS Feed",
+        "AndroidManifest.xml",
+        "Camera",
+        "HTTP",
+        "JSON",
+        "TCP",
+    ]
+
+    found_by_source: dict[str, list[str]] = {}
+    for source_path in _collect_source_paths(all_docs, source_filter):
+        source_name = _source_name_from_path(source_path) or source_path
+        full_text = _read_full_text_from_source(source_path)
+        if not full_text:
+            continue
+
+        normalized_text = _normalize_for_match(full_text)
+        matched: list[str] = []
+        for term in tech_terms:
+            if _normalize_for_match(term) in normalized_text:
+                matched.append(term)
+
+        if matched:
+            found_by_source[source_name] = sorted(set(matched), key=_natural_sort_key)
+
+    if not found_by_source:
+        return "Không phát hiện rõ tên công nghệ/thư viện nổi bật trong phạm vi tài liệu đã lọc."
+
+    merged_terms = sorted({term for terms in found_by_source.values() for term in terms}, key=_natural_sort_key)
+    lines = [
+        "Các công nghệ/thư viện đáng chú ý trong bộ tài liệu:",
+        *[f"- {term}" for term in merged_terms],
+        "",
+        "Theo từng tài liệu:",
+    ]
+
+    for source_name in sorted(found_by_source.keys(), key=_natural_sort_key):
+        lines.append(f"- {source_name}: {', '.join(found_by_source[source_name])}")
+
+    lines.append("")
+    lines.append("[Deterministic Advisory] Kết quả được trích xuất bằng đối sánh từ khóa trên toàn văn bản tài liệu.")
+    return "\n".join(lines)
 
 
 def _is_exercise_count_query(query: str) -> bool:
@@ -1277,6 +1458,10 @@ def _extract_chapter_title_keyword(query: str) -> str | None:
 
 def _looks_like_section_heading(line: str) -> bool:
     stripped = line.strip()
+    if re.fullmatch(r"\[\s*page\s*\d+\s*\]", stripped, flags=re.IGNORECASE):
+        return False
+    if re.fullmatch(r"(?:page|trang)\s*\d+", stripped, flags=re.IGNORECASE):
+        return False
     if not stripped or len(stripped) < 3 or len(stripped) > 90:
         return False
     if re.search(r"(?i)^\s*(?:bai|bài)\s*(?:tap|tập)", stripped):
@@ -1884,7 +2069,38 @@ def answer_question(
             confidence="N/A",
         )
 
-    prompt = _build_prompt(query=retrieval_query, docs=docs, chat_history=chat_history)
+    if _is_beginner_recommendation_query(retrieval_query):
+        advisory_answer = _build_beginner_recommendation_answer(
+            all_docs=filtered_all_docs,
+            source_filter=effective_filter,
+        )
+        return _build_result(
+            answer_body=advisory_answer,
+            sources=sources,
+            mode="Deterministic Advisory",
+            model_used="rule-based",
+            confidence="N/A",
+        )
+
+    if _is_technology_suggestion_query(retrieval_query):
+        advisory_answer = _build_technology_suggestion_answer(
+            all_docs=filtered_all_docs,
+            source_filter=effective_filter,
+        )
+        return _build_result(
+            answer_body=advisory_answer,
+            sources=sources,
+            mode="Deterministic Advisory",
+            model_used="rule-based",
+            confidence="N/A",
+        )
+
+    include_history = _should_include_history_in_prompt(query=query, used_rewrite=used_rewrite)
+    prompt = _build_prompt(
+        query=retrieval_query,
+        docs=docs,
+        chat_history=chat_history if include_history else None,
+    )
 
     def _invoke_with_model(active_model: str) -> tuple[str, int]:
         llm = OllamaLLM(model=active_model, base_url=OLLAMA_BASE_URL, temperature=0.2)

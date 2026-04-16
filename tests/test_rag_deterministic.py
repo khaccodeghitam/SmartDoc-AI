@@ -20,6 +20,9 @@ from app.rag_pipeline import (
     _slice_text_by_chapter,
     _slice_text_by_chapter_title,
     _build_context_for_scoring,
+    _should_include_history_in_prompt,
+    _is_beginner_recommendation_query,
+    _is_technology_suggestion_query,
 )
 
 
@@ -99,6 +102,21 @@ class TestDeterministicExtraction(unittest.TestCase):
         self.assertIn("Task C", sliced)
         self.assertNotIn("Task D", sliced)
 
+    def test_slice_text_by_chapter_title_not_cut_by_page_markers(self):
+        text = """
+        RESTFUL API
+        BÀI TẬP 4: Task Weather
+        [PAGE 2]
+        BÀI TẬP 5: Task Currency
+
+        LẬP TRÌNH MẠNG
+        BÀI TẬP 1: Task Network
+        """
+        sliced = _slice_text_by_chapter_title(text, "restful api")
+        self.assertIn("Task Weather", sliced)
+        self.assertIn("Task Currency", sliced)
+        self.assertNotIn("Task Network", sliced)
+
     def test_detect_sources_mentioned_in_query(self):
         sources = [
             "Bai_tap_123_-_Do_hoa_dinh_vi.pdf",
@@ -150,6 +168,30 @@ class TestDeterministicExtraction(unittest.TestCase):
     def test_extract_explicit_source_reference_from_query(self):
         query = "So luong bai tap cua tai lieu truy xuat phan cung co bao nhieu"
         self.assertEqual("truy xuat phan cung", _extract_explicit_source_reference(query))
+
+    def test_extract_explicit_source_reference_ignores_generic_tai_lieu_question(self):
+        query = "Tai lieu nao phu hop de hoc truoc cho nguoi moi, va vi sao?"
+        self.assertIsNone(_extract_explicit_source_reference(query))
+
+    def test_extract_explicit_source_reference_ignores_contextual_tai_lieu_phrase(self):
+        query = "Trong tai lieu co goi y cong nghe hay thu vien nao dang chu y?"
+        self.assertIsNone(_extract_explicit_source_reference(query))
+
+    def test_detect_unknown_source_reference_ignores_generic_tai_lieu_clauses(self):
+        docs = [
+            Document(page_content="A", metadata={"source": "Bai_tap_123_-_Do_hoa_dinh_vi.pdf"}),
+            Document(page_content="B", metadata={"source": "Bai_tap_123_-_Truy_xuat_phan_cung.pdf"}),
+        ]
+
+        query_1 = "Tu tai lieu hien co, rut ra tieu chi danh gia bai lam tot"
+        has_unknown_1, hint_1 = _detect_unknown_source_reference(query=query_1, all_docs=docs)
+        self.assertFalse(has_unknown_1)
+        self.assertEqual("", hint_1)
+
+        query_2 = "Diem giao nhau ve kien thuc giua hai tai lieu dang loc la gi?"
+        has_unknown_2, hint_2 = _detect_unknown_source_reference(query=query_2, all_docs=docs)
+        self.assertFalse(has_unknown_2)
+        self.assertEqual("", hint_2)
 
     def test_detect_unknown_source_reference_when_target_not_found(self):
         docs = [
@@ -211,6 +253,26 @@ class TestDeterministicExtraction(unittest.TestCase):
     def test_probably_english_query(self):
         self.assertTrue(_is_probably_english_query("How many exercises in chapter 3?"))
         self.assertFalse(_is_probably_english_query("RESTFUL API"))
+
+    def test_prompt_history_inclusion_for_standalone_query(self):
+        query = "Tai lieu nao phu hop de hoc truoc cho nguoi moi, va vi sao?"
+        self.assertFalse(_should_include_history_in_prompt(query=query, used_rewrite=False))
+
+    def test_prompt_history_inclusion_for_follow_up_query(self):
+        query = "Con bai 2 thi sao?"
+        self.assertTrue(_should_include_history_in_prompt(query=query, used_rewrite=False))
+
+    def test_prompt_history_inclusion_when_query_rewritten(self):
+        query = "Tai lieu nao phu hop de hoc truoc cho nguoi moi, va vi sao?"
+        self.assertTrue(_should_include_history_in_prompt(query=query, used_rewrite=True))
+
+    def test_beginner_recommendation_query_detect(self):
+        query = "Tai lieu nao phu hop de hoc truoc cho nguoi moi, va vi sao?"
+        self.assertTrue(_is_beginner_recommendation_query(query))
+
+    def test_technology_suggestion_query_detect(self):
+        query = "Trong tai lieu co goi y cong nghe hay thu vien nao dang chu y?"
+        self.assertTrue(_is_technology_suggestion_query(query))
 
 
 if __name__ == "__main__":
