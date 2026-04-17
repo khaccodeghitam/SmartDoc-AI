@@ -47,10 +47,6 @@ def keyword_overlap_score(query: str, text: str) -> float:
     return len(overlap) / len(query_tokens)
 
 
-def natural_sort_key(value: str) -> list[Any]:
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)]
-
-
 # ---------------------------------------------------------------------------
 # Source / path helpers
 # ---------------------------------------------------------------------------

@@ -46,19 +46,6 @@ def ingest_document(
     )
 
 
-def ingest_uploaded_file(
-    uploaded_file: Any,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-) -> IngestResult:
-    file_path = save_uploaded_file(uploaded_file)
-    return ingest_document(
-        file_path=file_path,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-
-
 def ingest_multiple_uploaded_files(
     uploaded_files: list[Any],
     chunk_size: int = DEFAULT_CHUNK_SIZE,

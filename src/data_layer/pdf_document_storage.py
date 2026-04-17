@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, List
+from typing import List
 
 from docx import Document as DocxDocument
 from langchain_community.document_loaders import PDFPlumberLoader
@@ -93,47 +92,3 @@ def enrich_chunks_metadata(chunks: list[Document], file_path: Path) -> list[Docu
         doc.metadata = metadata
 
     return chunks
-
-
-# ---------------------------------------------------------------------------
-# Raw text reading (for deterministic extraction)
-# ---------------------------------------------------------------------------
-
-@lru_cache(maxsize=128)
-def read_full_text_from_source(source_path: str) -> str:
-    """Read full raw text from a source file (PDF or DOCX)."""
-    path = Path(source_path)
-    if not path.exists():
-        candidate = RAW_DIR / path.name
-        if candidate.exists():
-            path = candidate
-        else:
-            return ""
-
-    suffix = path.suffix.lower()
-
-    if suffix == ".pdf":
-        try:
-            import pdfplumber
-
-            pages_text: list[str] = []
-            with pdfplumber.open(str(path)) as pdf:
-                for idx, page in enumerate(pdf.pages, start=1):
-                    page_text = page.extract_text() or ""
-                    pages_text.append(f"\n[PAGE {idx}]\n{page_text}")
-            return "\n".join(pages_text)
-        except Exception:
-            return ""
-
-    if suffix == ".docx":
-        try:
-            doc = DocxDocument(str(path))
-            paragraphs = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text and paragraph.text.strip()]
-            return "\n".join(paragraphs)
-        except Exception:
-            return ""
-
-    try:
-        return path.read_text("utf-8")
-    except Exception:
-        return ""
