@@ -63,6 +63,7 @@ def _init_state() -> None:
     st.session_state.setdefault("active_session_id", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("confirm_clear_status", False)
+    st.session_state.setdefault("confirm_clear_history_status", False)
 
     st.session_state.setdefault("sidebar_source_filter", [])
     st.session_state.setdefault("sidebar_file_type_filter", [])
@@ -280,6 +281,24 @@ def _render_sources(sources: list[dict], query: str) -> None:
 
 def _render_chat_sidebar() -> None:
     st.markdown("### Lịch sử cuộc trò chuyện")
+
+    if not st.session_state.get("confirm_clear_history_status", False):
+        if st.button("Clear History", use_container_width=True, key="btn_clear_history"):
+            st.session_state["confirm_clear_history_status"] = True
+            st.rerun()
+    else:
+        st.warning("Bạn có chắc chắn muốn xóa toàn bộ lịch sử hội thoại? Hành động này sẽ xóa tất cả phiên chat đã lưu.")
+        col_yes_history, col_no_history = st.columns(2)
+        if col_yes_history.button("Đồng ý xóa", key="yes_clear_history"):
+            st.session_state["chat_sessions"] = []
+            st.session_state["active_session_id"] = None
+            st.session_state["chat_history"] = []
+            save_persistent_history([])
+            st.session_state["confirm_clear_history_status"] = False
+            st.rerun()
+        if col_no_history.button("Hủy", key="no_clear_history"):
+            st.session_state["confirm_clear_history_status"] = False
+            st.rerun()
     
     if st.button("➕ Cuộc trò chuyện mới", type="primary", use_container_width=True, key="btn_new_session"):
         st.session_state["active_session_id"] = None
