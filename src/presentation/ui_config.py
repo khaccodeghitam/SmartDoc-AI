@@ -74,9 +74,14 @@ html, body, [class*="css"] {
     letter-spacing: 0.03em;
 }
 
+[data-testid="stSidebar"] .stNumberInput > div {
+    background: rgba(13, 22, 45, 0.86) !important;
+    border-color: rgba(126, 154, 230, 0.36) !important;
+    border-radius: 12px !important;
+}
+
 [data-testid="stSidebar"] [data-baseweb="input"] > div,
 [data-testid="stSidebar"] [data-baseweb="base-input"] > div,
-[data-testid="stSidebar"] .stNumberInput > div,
 [data-testid="stSidebar"] .stMultiSelect > div {
     background: rgba(13, 22, 45, 0.86) !important;
     border-color: rgba(126, 154, 230, 0.36) !important;
@@ -169,10 +174,13 @@ html, body, [class*="css"] {
 [data-testid="stExpandSidebarButton"] *,
 [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
 [data-testid="stHeader"] button[aria-label*="sidebar"],
-[data-testid="stHeader"] button[aria-label*="Sidebar"] {
+[data-testid="stHeader"] button[aria-label*="Sidebar"],
+[data-testid="stSidebarCollapseButton"] {
     color: #ffffff !important;
     fill: #ffffff !important;
     stroke: #ffffff !important;
+    opacity: 1 !important;
+    visibility: visible !important;
 }
 
 [data-testid="collapsedControl"] button:hover,
@@ -471,12 +479,18 @@ html, body, [class*="css"] {
 }
 
 .stTextArea textarea,
-[data-baseweb="input"] input,
-.stNumberInput input {
+[data-baseweb="input"] input {
     background: rgba(13, 22, 45, 0.82) !important;
     border: 1px solid rgba(126, 154, 230, 0.36) !important;
     color: #f3f7ff !important;
     border-radius: 12px !important;
+}
+
+.stNumberInput input {
+    background: rgba(13, 22, 45, 0.82) !important;
+    border: 1px solid rgba(126, 154, 230, 0.36) !important;
+    color: #f3f7ff !important;
+    border-radius: 12px 0 0 12px !important;
 }
 
 .stTextArea textarea::placeholder,

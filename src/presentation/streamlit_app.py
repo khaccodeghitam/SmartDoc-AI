@@ -188,6 +188,7 @@ def _start_corag_background_job(
                     {
                         "llm_assessment": iteration.llm_assessment,
                         "sub_query": iteration.sub_query,
+                        "retrieved_chunks": iteration.retrieved_chunks,
                         "retrieved_chunks_count": len(iteration.retrieved_chunks),
                     }
                     for iteration in corag_ans.iterations
@@ -791,86 +792,80 @@ def main() -> None:
             is_fallback=st.session_state.get("is_fallback_model", False),
             target=model_badge_slot,
         )
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("### Cấu hình ingest")
-        uploaded_files = st.file_uploader("Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)", type=["pdf", "docx"], accept_multiple_files=True)
-        chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=DEFAULT_CHUNK_SIZE, step=100)
-        chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=DEFAULT_CHUNK_OVERLAP, step=20)
-        top_k = st.number_input("Top-k search", min_value=1, max_value=10, value=DEFAULT_TOP_K, step=1)
+        with st.expander("⚙️ Cấu hình hệ thống & Index", expanded=False):
+            uploaded_files = st.file_uploader("Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)", type=["pdf", "docx"], accept_multiple_files=True)
+            chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=DEFAULT_CHUNK_SIZE, step=100)
+            chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=DEFAULT_CHUNK_OVERLAP, step=20)
+            top_k = st.number_input("Top-k search", min_value=1, max_value=10, value=DEFAULT_TOP_K, step=1)
 
-        available_sources_sidebar = st.session_state.get("available_sources", [])
-        available_file_types_sidebar = st.session_state.get("available_file_types", [])
-        available_upload_dates_sidebar = st.session_state.get("available_upload_dates", [])
-        sidebar_source_filter = None
-        sidebar_file_type_filter = None
-        sidebar_upload_date_filter = None
-        if available_sources_sidebar:
-            sidebar_source_filter = st.multiselect("Filter tài liệu mặc định", options=available_sources_sidebar, key="sidebar_source_filter")
-        if available_file_types_sidebar:
-            sidebar_file_type_filter = st.multiselect("Filter loại file", options=available_file_types_sidebar, key="sidebar_file_type_filter")
-        if available_upload_dates_sidebar:
-            sidebar_upload_date_filter = st.multiselect("Filter ngày upload", options=available_upload_dates_sidebar, key="sidebar_upload_date_filter")
+            available_sources_sidebar = st.session_state.get("available_sources", [])
+            available_file_types_sidebar = st.session_state.get("available_file_types", [])
+            available_upload_dates_sidebar = st.session_state.get("available_upload_dates", [])
+            sidebar_source_filter = None
+            sidebar_file_type_filter = None
+            sidebar_upload_date_filter = None
+            if available_sources_sidebar:
+                sidebar_source_filter = st.multiselect("Filter tài liệu mặc định", options=available_sources_sidebar, key="sidebar_source_filter")
+            if available_file_types_sidebar:
+                sidebar_file_type_filter = st.multiselect("Filter loại file", options=available_file_types_sidebar, key="sidebar_file_type_filter")
+            if available_upload_dates_sidebar:
+                sidebar_upload_date_filter = st.multiselect("Filter ngày upload", options=available_upload_dates_sidebar, key="sidebar_upload_date_filter")
 
-        st.markdown("---")
+            st.markdown("---")
 
-        # Clear vector store
-        if not st.session_state["confirm_clear_status"]:
-            if st.button("Clear Vector Store + trạng thái"):
-                st.session_state["confirm_clear_status"] = True
-                st.rerun()
-        else:
-            st.warning("Bạn có chắc chắn muốn xóa toàn bộ file đã upload và FAISS index trong data/raw + data/index?")
-            col_yes, col_no = st.columns(2)
-            if col_yes.button("Đồng ý xóa", key="yes_clear_status"):
-                clear_result = clear_vector_store_data()
-                st.session_state["last_index_dir"] = ""
-                st.session_state["last_index_name"] = ""
-                st.session_state["last_uploaded_file"] = ""
-                st.session_state["retrieval_history"] = []
-                st.session_state["last_chunks"] = []
-                st.session_state["last_bi_encoder_chunks"] = []
-                st.session_state["last_vector_only_chunks"] = []
-                st.session_state["last_query"] = ""
-                st.session_state["available_sources"] = []
-                st.session_state["available_file_types"] = []
-                st.session_state["available_upload_dates"] = []
-                st.session_state["pending_sidebar_filter_reset"] = True
-                st.session_state["last_ingested_paths"] = []
-                st.session_state["chunk_benchmark_rows"] = []
-                st.session_state["ingest_notice"] = (
-                    "Đã xóa dữ liệu tạm: "
-                    f"{clear_result.get('raw_deleted', 0)} mục trong raw, "
-                    f"{clear_result.get('index_deleted', 0)} mục trong index."
-                )
-                st.session_state["confirm_clear_status"] = False
-                st.rerun()
-            if col_no.button("Hủy", key="no_clear_status"):
-                st.session_state["confirm_clear_status"] = False
-                st.rerun()
+            # Clear vector store
+            if not st.session_state["confirm_clear_status"]:
+                if st.button("Clear Vector Store + trạng thái"):
+                    st.session_state["confirm_clear_status"] = True
+                    st.rerun()
+            else:
+                st.warning("Bạn có chắc chắn muốn xóa toàn bộ file đã upload và FAISS index trong data/raw + data/index?")
+                col_yes, col_no = st.columns(2)
+                if col_yes.button("Đồng ý xóa", key="yes_clear_status"):
+                    clear_result = clear_vector_store_data()
+                    st.session_state["last_index_dir"] = ""
+                    st.session_state["last_index_name"] = ""
+                    st.session_state["last_uploaded_file"] = ""
+                    st.session_state["retrieval_history"] = []
+                    st.session_state["last_chunks"] = []
+                    st.session_state["last_bi_encoder_chunks"] = []
+                    st.session_state["last_vector_only_chunks"] = []
+                    st.session_state["last_query"] = ""
+                    st.session_state["available_sources"] = []
+                    st.session_state["available_file_types"] = []
+                    st.session_state["available_upload_dates"] = []
+                    st.session_state["pending_sidebar_filter_reset"] = True
+                    st.session_state["last_ingested_paths"] = []
+                    st.session_state["chunk_benchmark_rows"] = []
+                    st.session_state["ingest_notice"] = (
+                        "Đã xóa dữ liệu tạm: "
+                        f"{clear_result.get('raw_deleted', 0)} mục trong raw, "
+                        f"{clear_result.get('index_deleted', 0)} mục trong index."
+                    )
+                    st.session_state["confirm_clear_status"] = False
+                    st.rerun()
+                if col_no.button("Hủy", key="no_clear_status"):
+                    st.session_state["confirm_clear_status"] = False
+                    st.rerun()
 
 
 
         st.markdown("---")
         # _render_chat_sidebar() moved to top
 
-    render_chip_row(["Streamlit UI", "Streamlit + CSS", "FAISS", "Ollama", "PDF/DOCX"])
 
-    st.markdown('<div class="smartdoc-card">', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Tài liệu", "PDF/DOCX")
-    col2.metric("Vector store", "FAISS")
-    col3.metric("UI layer", "Streamlit")
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    tab_upload, tab_retrieve, tab_qa, tab_history = st.tabs([
-        "1. Upload & Index", "2. Retrieval Demo", "3. Q&A với LLM", "4. Lịch sử & Ghi chú",
+    tab_upload, tab_retrieve, tab_qa = st.tabs([
+        "Upload & Index", "Retrieval Demo", "Q&A với LLM",
     ])
 
     with tab_upload:
         left, right = st.columns([1.25, 0.9], gap="large")
 
         with left:
-            _card_start("Bước 1: Nạp tài liệu", "Tải file lên, sau đó chunking và build FAISS index thật.")
+            _card_start("Nạp tài liệu", "Tải file lên, sau đó chunking và build FAISS index thật.")
             if st.session_state.get("ingest_notice"):
                 st.success(st.session_state["ingest_notice"])
                 st.session_state["ingest_notice"] = ""
@@ -1003,35 +998,14 @@ def main() -> None:
                         st.rerun()
             else:
                 st.info("Chưa chọn tài liệu. Hãy upload PDF hoặc DOCX để bắt đầu.")
-            _card_end()
-
-        with right:
-            _card_start("Bước 1.1: Checklist giao diện", "Đây là những phần UI bám sát yêu cầu assignment.")
-            st.markdown(
-                """
-                <div class="smartdoc-step">
-                    <div class="smartdoc-step-title">File uploader</div>
-                    <div class="smartdoc-step-desc">Nhận tài liệu PDF/DOCX từ người dùng.</div>
-                </div>
-                <div class="smartdoc-step">
-                    <div class="smartdoc-step-title">Processing state</div>
-                    <div class="smartdoc-step-desc">Hiển thị spinner và thông báo trong lúc xử lý.</div>
-                </div>
-                <div class="smartdoc-step">
-                    <div class="smartdoc-step-title">Result display</div>
-                    <div class="smartdoc-step-desc">Trình bày chunk, metadata và trạng thái index.</div>
-                </div>
-                <div class="smartdoc-step">
-                    <div class="smartdoc-step-title">Error handling</div>
-                    <div class="smartdoc-step-desc">Thông báo rõ ràng nếu file sai định dạng hoặc lỗi xử lý.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            
+            st.markdown("---")
             _render_index_state()
             _card_end()
 
-            _card_start("Bước 1.2: So sánh chunk strategy", "Đánh giá nhanh các cấu hình chunk_size/chunk_overlap trên cùng truy vấn.")
+        with right:
+
+            _card_start("So sánh chunk strategy", "Đánh giá nhanh các cấu hình chunk_size/chunk_overlap trên cùng truy vấn.")
             eval_query = st.text_input(
                 "Câu truy vấn để benchmark",
                 value=st.session_state.get("last_query", ""),
@@ -1077,7 +1051,7 @@ def main() -> None:
         left, right = st.columns([1.0, 1.0], gap="large")
 
         with left:
-            _card_start("Bước 2: Truy vấn top-k chunks", "Chạy FAISS (Vector) + BM25 (Keyword) Hybrid Search.")
+            _card_start("Truy vấn top-k chunks", "Chạy FAISS (Vector) + BM25 (Keyword) Hybrid Search.")
             last_index_dir = st.session_state.get("last_index_dir")
             if last_index_dir:
                 query = st.text_area(
@@ -1162,13 +1136,13 @@ def main() -> None:
             _card_end()
 
     with tab_qa:
-        _card_start("Bước 3: Giao diện so sánh - Basic RAG vs Co-RAG", "Hiển thị cách LLM lấy thông tin và tự suy luận đa bước.")
+        _card_start("So sánh Basic RAG vs Co-RAG", "Hiển thị cách LLM lấy thông tin và tự suy luận đa bước.")
         last_index_dir = st.session_state.get("last_index_dir")
         
         # Luon hien thi lich su trao doi cua phien chat dang chon (ngay ca khi chua co index)
         current_history = st.session_state.get("chat_history", [])
         if current_history:
-            st.markdown("##### Lich su trao doi")
+            st.markdown("##### Lịch sử trò chuyện")
             for item in reversed(current_history):
                 if bool(item.get("is_pending_selection", False)) and not str(item.get("selected_source", "")).strip():
                     continue
@@ -1191,11 +1165,12 @@ def main() -> None:
                 height=80, key="qa_query",
             )
             pending_qa = st.session_state.get("pending_qa")
-            action_col_ask, action_col_pause = st.columns([4, 1])
+            action_col_ask, action_col_pause, _ = st.columns([0.23, 0.05, 0.72], gap="small")
             action_col_ask.button(
                 "Tranh luận / So sánh AI",
                 type="primary",
                 key="qa_button",
+                use_container_width=True,
                 disabled=(
                     bool(pending_qa)
                     or bool(st.session_state.get("qa_generation_in_progress", False))
@@ -1203,7 +1178,7 @@ def main() -> None:
                 ),
                 on_click=_request_qa_generation,
             )
-            pause_clicked = action_col_pause.button("⏸", key="qa_pause_button", help="Pause câu hỏi hiện tại")
+            pause_clicked = action_col_pause.button("⏸", key="qa_pause_button", help="Pause câu hỏi hiện tại", use_container_width=True)
 
             if st.session_state.get("qa_submit_requested", False):
                 if st.session_state.get("pending_qa"):
@@ -1311,6 +1286,7 @@ def main() -> None:
                                 {
                                     "llm_assessment": iteration.llm_assessment,
                                     "sub_query": iteration.sub_query,
+                                    "retrieved_chunks": iteration.retrieved_chunks,
                                     "retrieved_chunks_count": len(iteration.retrieved_chunks),
                                 }
                                 for iteration in (corag_ans.iterations if corag_ans else [])
@@ -1412,7 +1388,9 @@ def main() -> None:
                             with st.expander(f"Vòng {it_idx} | Đánh giá & Sub-query"):
                                 st.markdown(f"**Ý kiến LLM:** {iteration.get('llm_assessment') or 'Không có (Vòng đánh giá/Cuối)'}")
                                 st.markdown(f"**Sub-query tạo ra:** `{iteration.get('sub_query', '')}`")
-                                st.markdown(f"**Chunks kéo về:** {int(iteration.get('retrieved_chunks_count', 0))} chunks")
+                                st.markdown(f"**Số lượng đoạn trích:** {int(iteration.get('retrieved_chunks_count', 0))} chunks")
+                                with st.expander("Ngữ cảnh đã dùng ở vòng này"):
+                                    st.write("\n\n---\n\n".join(iteration.get("retrieved_chunks", [])))
                     else:
                         st.warning("Co-RAG chưa sinh được câu trả lời.")
 
@@ -1422,15 +1400,7 @@ def main() -> None:
                             st.rerun()
             _card_end()
 
-    with tab_history:
-        _card_start("Lịch sử thao tác", "Những hành động gần nhất của người dùng trong phiên hiện tại.")
-        history = st.session_state.get("retrieval_history", [])
-        if history:
-            for item in history:
-                st.markdown(f"- **{item['kind']}**: {item['detail']}")
-        else:
-            st.write("Chưa có lịch sử nào.")
-        _card_end()
+
 
     st.markdown('<hr class="smartdoc-divider" />', unsafe_allow_html=True)
 
