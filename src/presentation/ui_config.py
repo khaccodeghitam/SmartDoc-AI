@@ -445,6 +445,23 @@ html, body, [class*="css"] {
     box-shadow: 0 10px 20px rgba(46, 126, 231, 0.28);
 }
 
+/* Pause button: avoid default white hover from BaseWeb secondary button */
+.st-key-qa_pause_button [data-testid="stBaseButton-secondary"] {
+    background: rgba(255, 255, 255, 0.10) !important;
+    border: 1px solid rgba(183, 205, 255, 0.40) !important;
+    color: #eff5ff !important;
+    -webkit-text-fill-color: #eff5ff !important;
+    box-shadow: none !important;
+    transition: opacity 140ms ease, background 140ms ease;
+}
+
+.st-key-qa_pause_button [data-testid="stBaseButton-secondary"]:hover {
+    background: rgba(255, 255, 255, 0.14) !important;
+    opacity: 0.92;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
 .stButton > button:disabled {
     background: linear-gradient(130deg, #365f9c, #446ea8) !important;
     color: #e7f0ff !important;

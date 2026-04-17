@@ -127,9 +127,12 @@ def build_corag_sufficiency_check_prompt(question: str, contexts: list[str]) -> 
 def build_corag_final_prompt(
     question: str, 
     contexts: list[str], 
-    document_overview: str = ""
+    document_overview: str = "",
+    chat_history: list[dict] | None = None,
 ) -> str:
     context_text = "\n\n".join(contexts)
+    history_context = build_chat_history_context(chat_history)
+    history_text = f"Lịch sử hội thoại liên quan:\n{history_context}\n\n" if history_context else ""
     doc_overview_text = f"Tổng quan tài liệu:\n{document_overview}\n\n" if document_overview else ""
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
@@ -138,6 +141,7 @@ def build_corag_final_prompt(
             "Hãy trả lời ở mức độ chi tiết và có giải thích. Dùng gạch đầu dòng nếu cần thiết.\n"
             "Tham chiếu nguồn bằng tên file gốc (Ví dụ: [file.pdf]). KHÔNG gọi chung chung là 'Tài liệu 1', 'Tài liệu 2'.\n\n"
             f"{doc_overview_text}"
+            f"{history_text}"
             f"Ngữ cảnh tài liệu tích lũy được:\n{context_text}\n\n"
             f"Câu hỏi: {question}\n\n"
             "Câu trả lời:"
@@ -148,6 +152,7 @@ def build_corag_final_prompt(
         "Provide a VERY DETAILED, COMPREHENSIVE, AND IN-DEPTH answer.\n"
         "Do not be brief. Explain the rationale and use bullet points where necessary.\n\n"
         f"{doc_overview_text}"
+        f"{history_text}"
         f"Accumulated Context:\n{context_text}\n\n"
         f"Question: {question}\n\n"
         "Detailed Answer:"

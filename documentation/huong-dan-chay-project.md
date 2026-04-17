@@ -48,7 +48,7 @@ ollama pull qwen2.5:7b
 Khuyen nghi chay theo cach nay de dam bao dung Python trong .venv:
 
 ```powershell
-python -m streamlit run app/main.py
+python -m streamlit run app.py
 ```
 
 Sau do mo trinh duyet theo URL hien thi trong terminal, thuong la:
@@ -75,7 +75,7 @@ Da duoc xu ly trong code. Neu con gap lai:
 2. Chay bang lenh:
 
 ```powershell
-python -m streamlit run app/main.py
+python -m streamlit run app.py
 ```
 
 ### Loi 2: ollama khong duoc nhan lenh
@@ -101,5 +101,5 @@ cd "D:\sinh vien\OSSD\project"
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ollama pull qwen2.5:7b
-python -m streamlit run app/main.py
+python -m streamlit run app.py
 ```

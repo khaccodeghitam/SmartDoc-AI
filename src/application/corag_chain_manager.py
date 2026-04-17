@@ -92,10 +92,32 @@ class CoRAGChainManager:
         prompt = build_corag_sufficiency_check_prompt(question=question, contexts=accumulated_context)
         return self.model_engine.generate(prompt=prompt, question=question).strip()
 
-    def ask(self, question: str) -> CoRAGAnswer:
+    @staticmethod
+    def _is_cancelled(stop_signal: Any | None) -> bool:
+        if stop_signal is None:
+            return False
+        checker = getattr(stop_signal, "is_set", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        return False
+
+    def ask(
+        self,
+        question: str,
+        retrieval_query: str | None = None,
+        chat_history: list[dict] | None = None,
+        include_history: bool = False,
+        stop_signal: Any | None = None,
+    ) -> CoRAGAnswer:
         question_text = question.strip()
         if not question_text:
             raise ValueError("Hãy nhập nội dung câu hỏi.")
+        retrieval_text = (retrieval_query or question_text).strip()
+        if not retrieval_text:
+            retrieval_text = question_text
 
         store = self._get_faiss()
         all_docs = list(store.docstore._dict.values())
@@ -107,14 +129,16 @@ class CoRAGChainManager:
         all_raw_retrieved_docs: list[Any] = []
 
         # Vòng 1
-        initial_chunks, raw_docs = self._retrieve_and_format_chunks(question_text)
+        if self._is_cancelled(stop_signal):
+            raise RuntimeError("Co-RAG cancelled by user.")
+        initial_chunks, raw_docs = self._retrieve_and_format_chunks(retrieval_text)
         all_raw_retrieved_docs.extend(raw_docs)
 
         accumulated_context = self._deduplicate_chunks(accumulated_context, initial_chunks)
         iterations.append(
             CoRAGIteration(
                 round_num=1,
-                sub_query=question_text,
+                sub_query=retrieval_text,
                 retrieved_chunks=list(initial_chunks),
                 llm_assessment="",
             )
@@ -122,6 +146,8 @@ class CoRAGChainManager:
 
         # Vòng 2..max_rounds
         for round_num in range(2, self.max_rounds + 1):
+            if self._is_cancelled(stop_signal):
+                raise RuntimeError("Co-RAG cancelled by user.")
             assessment = self._assess_sufficiency(
                 question=question_text,
                 accumulated_context=accumulated_context,
@@ -138,7 +164,7 @@ class CoRAGChainManager:
             if _SUFFICIENT_SIGNAL.upper() in assessment.upper():
                 break
 
-            sub_query = _extract_subquery(assessment, fallback=question_text)
+            sub_query = _extract_subquery(assessment, fallback=retrieval_text)
             new_chunks, new_raw_docs = self._retrieve_and_format_chunks(sub_query)
             accumulated_context = self._deduplicate_chunks(accumulated_context, new_chunks)
             all_raw_retrieved_docs.extend(new_raw_docs)
@@ -153,10 +179,13 @@ class CoRAGChainManager:
             )
 
         # Trả lời vòng cuối
+        if self._is_cancelled(stop_signal):
+            raise RuntimeError("Co-RAG cancelled by user.")
         final_prompt = build_corag_final_prompt(
             question=question_text,
             contexts=accumulated_context,
             document_overview="",
+            chat_history=chat_history if include_history else None,
         )
         answer = self.model_engine.generate(prompt=final_prompt, question=question_text)
         

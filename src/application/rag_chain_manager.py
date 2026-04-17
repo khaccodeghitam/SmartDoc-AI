@@ -266,14 +266,24 @@ class RAGChainManager:
 
         return contexts
 
-    def ask(self, question: str, top_k: int = 4) -> RAGAnswer:
+    def ask(
+        self,
+        question: str,
+        top_k: int = 4,
+        retrieval_query: str | None = None,
+        chat_history: list[dict] | None = None,
+        include_history: bool = False,
+    ) -> RAGAnswer:
         question_text = question.strip()
         if not question_text:
             raise ValueError("Hãy nhập nội dung câu hỏi.")
         if top_k < 1:
             raise ValueError("top_k phải >= 1")
+        retrieval_text = (retrieval_query or question_text).strip()
+        if not retrieval_text:
+            retrieval_text = question_text
 
-        retrieved = search_similar_chunks(self.vector_store_idx, question_text, top_k=top_k)
+        retrieved = search_similar_chunks(self.vector_store_idx, retrieval_text, top_k=top_k)
         contexts = self._format_context_chunks(retrieved)
         
         if not contexts:
@@ -285,7 +295,11 @@ class RAGChainManager:
                 raw_docs=[],
             )
 
-        prompt = build_rag_prompt(question=question_text, contexts=contexts)
+        prompt = build_rag_prompt(
+            question=question_text,
+            contexts=contexts,
+            chat_history=chat_history if include_history else None,
+        )
         answer = self.model_engine.generate(prompt=prompt, question=question_text)
         
         confidence = self.model_engine.self_rag_confidence_score(
