@@ -160,6 +160,29 @@ html, body, [class*="css"] {
     border: 1px solid rgba(126, 154, 230, 0.52) !important;
 }
 
+/* Sidebar expand/collapse control: keep the arrow clearly visible */
+[data-testid="collapsedControl"],
+[data-testid="collapsedControl"] button,
+[data-testid="collapsedControl"] svg,
+[data-testid="collapsedControl"] path,
+[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"] *,
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+[data-testid="stHeader"] button[aria-label*="sidebar"],
+[data-testid="stHeader"] button[aria-label*="Sidebar"] {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+}
+
+[data-testid="collapsedControl"] button:hover,
+[data-testid="stExpandSidebarButton"]:hover,
+[data-testid="stExpandSidebarButton"]:hover *,
+[data-testid="stHeader"] button[aria-label*="sidebar"]:hover,
+[data-testid="stHeader"] button[aria-label*="Sidebar"]:hover {
+    background: rgba(255, 255, 255, 0.10) !important;
+}
+
 [data-testid="stSidebar"] [data-testid="stFileUploader"] svg {
     fill: #d9e7ff !important;
 }
@@ -420,6 +443,23 @@ html, body, [class*="css"] {
 .stButton > button:hover {
     transform: translateY(-1px);
     box-shadow: 0 10px 20px rgba(46, 126, 231, 0.28);
+}
+
+/* Pause button: avoid default white hover from BaseWeb secondary button */
+.st-key-qa_pause_button [data-testid="stBaseButton-secondary"] {
+    background: rgba(255, 255, 255, 0.10) !important;
+    border: 1px solid rgba(183, 205, 255, 0.40) !important;
+    color: #eff5ff !important;
+    -webkit-text-fill-color: #eff5ff !important;
+    box-shadow: none !important;
+    transition: opacity 140ms ease, background 140ms ease;
+}
+
+.st-key-qa_pause_button [data-testid="stBaseButton-secondary"]:hover {
+    background: rgba(255, 255, 255, 0.14) !important;
+    opacity: 0.92;
+    box-shadow: none !important;
+    transform: none !important;
 }
 
 .stButton > button:disabled {

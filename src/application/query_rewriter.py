@@ -28,6 +28,23 @@ def is_follow_up_query(query: str) -> bool:
     if not q:
         return False
 
+    followup_prefixes = (
+        "con ", "vay con", "the con", "tiep theo", "what about", "and ", "then ",
+    )
+    if q.startswith(followup_prefixes):
+        return True
+
+    # Clarification questions with demonstrative references are strong follow-up signals.
+    explanation_markers = (
+        "la sao", "giai thich", "giai thich ro", "noi ro", "cu the", "nghia la gi",
+    )
+    reference_markers = (
+        " nay", " do", " y nay", " y do", " cau nay", " doan nay", " phan nay",
+        " o tren", " ben tren", " nhu tren", " vua neu", " phan tu nay",
+    )
+    if any(marker in q for marker in explanation_markers) and any(marker in q for marker in reference_markers):
+        return True
+
     standalone_markers = [
         "noi dung", "chi tiet", "de bai", "la gi", "bao nhieu",
         "liet ke", "danh sach", "bai tap", "exercise", "chapter", "chuong",
@@ -35,14 +52,8 @@ def is_follow_up_query(query: str) -> bool:
     if any(marker in q for marker in standalone_markers) and len(q.split()) >= 6:
         return False
 
-    followup_prefixes = (
-        "con ", "vay con", "the con", "tiep theo", "what about", "and ", "then ",
-    )
-    if q.startswith(followup_prefixes):
-        return True
-
     tokens = q.split()
-    referential_tokens = {"no", "do", "vay", "it", "that", "this", "those", "them"}
+    referential_tokens = {"no", "do", "vay", "nay", "it", "that", "this", "those", "them"}
     if len(tokens) <= 6 and any(token in referential_tokens for token in tokens):
         return True
 
