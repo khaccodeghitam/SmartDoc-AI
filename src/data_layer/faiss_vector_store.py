@@ -142,6 +142,40 @@ def is_toc_intent(query: str) -> bool:
     )
 
 
+def filter_low_quality_chunks(docs: list[Document], query: str = "", min_length: int = 80) -> list[Document]:
+    """Filter out low-quality chunks early: TOC, very short content, duplicates.
+    
+    This reduces noise and speeds up Co-RAG iterations.
+    """
+    if not docs:
+        return []
+    
+    toc_intent = is_toc_intent(query)
+    filtered: list[Document] = []
+    seen_content: set[str] = set()
+    
+    for doc in docs:
+        content = (doc.page_content or "").strip()
+        
+        # Skip empty or too short chunks
+        if len(content) < min_length:
+            continue
+        
+        # Skip TOC-like content unless query is about TOC
+        if looks_like_toc(content) and not toc_intent:
+            continue
+        
+        # Skip duplicates
+        content_key = re.sub(r'\s+', ' ', content.lower())[:200]
+        if content_key in seen_content:
+            continue
+        
+        seen_content.add(content_key)
+        filtered.append(doc)
+    
+    return filtered
+
+
 # ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
@@ -177,7 +211,8 @@ def _get_cross_encoder():
         return None
 
 
-def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
+def rerank_docs(query: str, docs: list[Document], top_k: int, aggressive: bool = False) -> list[Document]:
+    """Re-rank documents by relevance. Set aggressive=True for Co-RAG to filter low-quality matches."""
     if not docs:
         return []
 
@@ -198,6 +233,11 @@ def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
                 toc_penalty = 3.0 if (looks_like_toc(text) and not toc_intent) else 0.0
                 short_penalty = 1.0 if len(text.strip()) < 120 else 0.0
                 final_score = float(score) - toc_penalty - short_penalty
+                
+                # Aggressive filtering: filter out very low-confidence matches
+                if aggressive and final_score < 2.0:
+                    continue
+                    
                 scored.append((final_score, doc))
         except Exception as error:
             print(f"Cross-encoder error: {error}, falling back to keyword overlap.")
@@ -210,6 +250,11 @@ def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
             toc_penalty = 0.18 if (looks_like_toc(text) and not toc_intent) else 0.0
             short_penalty = 0.05 if len(text.strip()) < 120 else 0.0
             score = overlap - toc_penalty - short_penalty
+            
+            # Aggressive filtering: filter out very low-confidence matches
+            if aggressive and score < 0.15:
+                continue
+                
             scored.append((score, doc))
 
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -228,6 +273,7 @@ def search_similar_chunks(
     file_type_filter: list[str] | None = None,
     upload_date_filter: list[str] | None = None,
     use_rerank: bool = True,
+    aggressive_rerank: bool = False,
 ) -> list[Document]:
     vector_store = load_faiss_index(index_dir)
     all_docs = list(vector_store.docstore._dict.values())
@@ -285,7 +331,7 @@ def search_similar_chunks(
     unique_docs = deduplicate_docs(candidates)
     if not use_rerank:
         return unique_docs[:top_k]
-    return rerank_docs(query=query, docs=unique_docs, top_k=top_k)
+    return rerank_docs(query=query, docs=unique_docs, top_k=top_k, aggressive=aggressive_rerank)
 
 
 def search_vector_only_chunks(

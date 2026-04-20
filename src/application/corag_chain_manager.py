@@ -12,7 +12,11 @@ from src.application.prompt_engineering import (
     build_corag_final_prompt,
     build_corag_sufficiency_check_prompt,
 )
-from src.data_layer.faiss_vector_store import load_faiss_index, search_similar_chunks
+from src.data_layer.faiss_vector_store import (
+    load_faiss_index,
+    search_similar_chunks,
+    filter_low_quality_chunks,
+)
 from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
 from src.utils import source_name_from_path
 
@@ -61,9 +65,19 @@ class CoRAGChainManager:
         return self._faiss_store
 
     def _retrieve_and_format_chunks(self, query: str) -> tuple[list[str], list[Any]]:
-        retrieved = search_similar_chunks(self.vector_store_idx, query, top_k=self.top_k)
+        # Use aggressive reranking for Co-RAG to get only high-confidence matches
+        retrieved = search_similar_chunks(
+            self.vector_store_idx, 
+            query, 
+            top_k=self.top_k,
+            aggressive_rerank=True
+        )
+        
+        # Filter out low-quality chunks early to reduce noise in Co-RAG iterations
+        quality_filtered = filter_low_quality_chunks(retrieved, query=query, min_length=80)
+        
         chunks: list[str] = []
-        for idx, doc in enumerate(retrieved, start=1):
+        for idx, doc in enumerate(quality_filtered, start=1):
             content = (getattr(doc, "page_content", "") or "").strip()
             if not content:
                 continue
@@ -76,7 +90,7 @@ class CoRAGChainManager:
             header = f"[Đoạn trích từ file: {file_name} | Trang: {page}]"
             chunks.append(f"{header}\n{content}".strip())
 
-        return chunks, retrieved
+        return chunks, quality_filtered
 
     @staticmethod
     def _deduplicate_chunks(existing: list[str], new_chunks: list[str]) -> list[str]:

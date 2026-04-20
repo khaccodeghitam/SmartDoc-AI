@@ -68,10 +68,25 @@ class OllamaInferenceEngine:
                     self.active_model = fallback
                     break
         
-        self._llm = OllamaLLM(model=self.active_model, base_url=OLLAMA_BASE_URL, temperature=self.temperature)
+        # Enable GPU acceleration and optimize inference
+        self._llm = OllamaLLM(
+            model=self.active_model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=self.temperature,
+            num_gpu=99,  # Load as many layers to GPU as possible
+            num_thread=8,  # Use multiple threads for CPU inference
+            num_ctx=3000,  # Context window optimization
+        )
 
     def _get_llm(self, model: str) -> OllamaLLM:
-        return OllamaLLM(model=model, base_url=OLLAMA_BASE_URL, temperature=self.temperature)
+        return OllamaLLM(
+            model=model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=self.temperature,
+            num_gpu=99,
+            num_thread=8,
+            num_ctx=3000,
+        )
 
     def generate(self, prompt: str, question: str = "", document_name: str = "") -> str:
         """Thực thi câu truy vấn tới LLM, có mechanism fallback nếu lỗi model."""

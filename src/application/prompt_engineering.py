@@ -77,29 +77,26 @@ def build_rag_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
-            "Dựa théo các ngữ cảnh sau đây để trả lời câu hỏi.\n"
-            "Nếu không đủ thông tin, hãy nói rõ là không tìm thấy thông tin trong tài liệu.\n"
-            "Trả lời ngắn gọn, đúng trọng tâm bằng tiếng Việt.\n"
-            "Nếu có thông tin trích dẫn thì hãy kèm tham chiếu nguồn bằng tên file gốc (Ví dụ: [file.pdf]).\n"
-            "KHÔNG gọi chung chung là 'Tài liệu 1', 'Tài liệu 2', hãy nêu rõ tên tài liệu.\n\n"
-            "KHONG duoc bo sung thong tin ngoai context, khong tu tien the hien danh sach bai tap neu context khong co.\n\n"
+            "Dựa vào ngữ cảnh trả lời câu hỏi. Trả lời ngắn gọn, chính xác.\n"
+            "Nếu không có thông tin, nói rõ là không tìm thấy.\n"
+            "Kèm tên file gốc khi trích dẫn [file.pdf], không gọi chung chung.\n"
+            "Không thêm thông tin ngoài context.\n\n"
             f"{doc_overview_text}"
             f"{history_text}"
-            f"Ngữ cảnh tài liệu:\n{context_text}\n\n"
-            f"Câu hỏi: {question}\n\n"
+            f"Ngữ cảnh: {context_text}\n\n"
+            f"Câu hỏi: {question}\n"
             "Trả lời:"
         )
 
     return (
-        "Use the following context to answer the question.\n"
-        "If you don't know the answer, say you don't know.\n"
-        "Keep answer concise and to the point.\n"
-        "If citing information, include source references.\n\n"
-        "Do not add facts outside the context.\n\n"
+        "Answer based on context provided. Be concise and accurate.\n"
+        "If information not found, state it clearly.\n"
+        "Include file name when citing [file.pdf].\n"
+        "Do not add facts outside context.\n\n"
         f"{doc_overview_text}"
         f"{history_text}"
-        f"Document Context:\n{context_text}\n\n"
-        f"Question: {question}\n\n"
+        f"Context: {context_text}\n\n"
+        f"Question: {question}\n"
         "Answer:"
     )
 
@@ -111,16 +108,11 @@ def build_rag_prompt(
 def build_corag_sufficiency_check_prompt(question: str, contexts: list[str]) -> str:
     context_text = "\n\n".join(contexts) if contexts else "(Chưa có ngữ cảnh)"
     return (
-        "Bạn là một trợ lý thông minh đóng vai trò Đánh Giá Context (Sufficiency Assessor).\n"
-        "Mục tiêu là xác định xem các đoạn ngữ cảnh hiện tại đã ĐỦ thông tin để trả lời câu hỏi hay chưa.\n\n"
+        "Đánh giá: ngữ cảnh hiện tại có đủ trả lời câu hỏi không?\n\n"
         f"Câu hỏi: {question}\n\n"
-        f"Ngữ cảnh hiện tại:\n{context_text}\n\n"
-        "Nhiệm vụ:\n"
-        "1. Nếu NGỮ CẢNH HIỆN TẠI ĐÃ ĐỦ ĐỂ TRẢ LỜI CÂU HỎI MỘT CÁCH TRỌN VẸN: Hãy phản hồi đúng một chữ 'SUFFICIENT'.\n"
-        "2. Nếu NGỮ CẢNH CHƯA ĐỦ (thiếu thông tin quan trọng): Hãy sinh ra MỘT câu truy vấn tìm kiếm MỚI (sub-query) "
-        "bổ sung từ khóa để hệ thống có thể kéo thêm thông tin cần thiết từ vector store.\n"
-        "  - Định dạng sub-query bắt buộc phải bắt đầu bằng 'SUB_QUERY:' (ví dụ: SUB_QUERY: so luong bai tap chuong 2).\n"
-        "  - KHÔNG giải thích dài dòng."
+        f"Ngữ cảnh: {context_text}\n\n"
+        "Nếu ĐỦ: Trả lời 'SUFFICIENT'\n"
+        "Nếu CHƯA ĐỦ: Trả lời 'SUB_QUERY: <tìm kiếm bổ sung>' (không giải thích thêm)"
     )
 
 
@@ -137,14 +129,13 @@ def build_corag_final_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
-            "Dựa théo các ngữ cảnh sau đây để trả lời câu hỏi.\n"
-            "Hãy trả lời ở mức độ chi tiết và có giải thích. Dùng gạch đầu dòng nếu cần thiết.\n"
-            "Tham chiếu nguồn bằng tên file gốc (Ví dụ: [file.pdf]). KHÔNG gọi chung chung là 'Tài liệu 1', 'Tài liệu 2'.\n\n"
+            "Dựa vào ngữ cảnh trả lời chi tiết. Kèm tên file gốc [file.pdf].\n"
+            "Không gọi chung chung 'Tài liệu 1', 'Tài liệu 2'.\n\n"
             f"{doc_overview_text}"
             f"{history_text}"
-            f"Ngữ cảnh tài liệu tích lũy được:\n{context_text}\n\n"
-            f"Câu hỏi: {question}\n\n"
-            "Câu trả lời:"
+            f"Ngữ cảnh: {context_text}\n\n"
+            f"Câu hỏi: {question}\n"
+            "Trả lời:"
         )
 
     return (
