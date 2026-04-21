@@ -17,7 +17,7 @@ from src.config import (
     SCORING_EXCERPT_CHARS,
     SCORING_CONTEXT_MAX_CHARS,
 )
-from src.utils import source_name_from_path
+from src.utils import keyword_overlap_score, normalize_for_match, source_name_from_path
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,29 @@ def _build_context_for_scoring(docs: list[Document]) -> str:
     return "\n\n".join(context_blocks)
 
 
+def _heuristic_confidence_score(query: str, answer: str, context_text: str) -> int:
+    answer_text = (answer or "").strip()
+    if not answer_text:
+        return 1
+
+    query_alignment = keyword_overlap_score(query, answer_text)
+    context_alignment = keyword_overlap_score(context_text, answer_text)
+    answer_length = len(normalize_for_match(answer_text))
+
+    length_score = 0.0
+    if answer_length >= 200:
+        length_score = 1.0
+    elif answer_length >= 120:
+        length_score = 0.7
+    elif answer_length >= 60:
+        length_score = 0.4
+    else:
+        length_score = 0.1
+
+    blended = (query_alignment * 3.5) + (context_alignment * 4.0) + (length_score * 2.5)
+    return max(1, min(10, int(round(blended))))
+
+
 class OllamaInferenceEngine:
     """Class encapsulate LLM invocation with fallback logic."""
 
@@ -67,11 +90,25 @@ class OllamaInferenceEngine:
                 if fallback not in st.session_state.get("sticky_fallbacks", []):
                     self.active_model = fallback
                     break
-        
-        self._llm = OllamaLLM(model=self.active_model, base_url=OLLAMA_BASE_URL, temperature=self.temperature)
+
+        self._llm = OllamaLLM(
+            model=self.active_model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=self.temperature,
+            num_gpu=99,
+            num_thread=8,
+            num_ctx=3000,
+        )
 
     def _get_llm(self, model: str) -> OllamaLLM:
-        return OllamaLLM(model=model, base_url=OLLAMA_BASE_URL, temperature=self.temperature)
+        return OllamaLLM(
+            model=model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=self.temperature,
+            num_gpu=99,
+            num_thread=8,
+            num_ctx=3000,
+        )
 
     def generate(self, prompt: str, question: str = "", document_name: str = "") -> str:
         """Thực thi câu truy vấn tới LLM, có mechanism fallback nếu lỗi model."""
@@ -105,9 +142,9 @@ class OllamaInferenceEngine:
         """Let the LLM evaluate its own answer against the retrieved context (1-10)."""
         context_text = _build_context_for_scoring(docs)
         scoring_prompt = (
-            "Ban la bo phan kiem chung chat luong RAG.\n"
-            "Duoc cho cau hoi, context truy xuat va cau tra loi cua model.\n"
-            "Hay danh gia do tin cay cua cau tra loi so voi context theo thang 1-10.\n"
+            "Ban la bo phan cham diem do tin cay.\n"
+            "Dua tren cau hoi, context truyen vao va cau tra loi.\n"
+            "Chiem diem theo thang 1-10, trong do: 1-3 = sai/rat yeu, 4-6 = tam on, 7-8 = tot, 9-10 = rat chac chan va bam sat context.\n"
             "Chi tra ve DUY NHAT mot so nguyen tu 1 den 10.\n\n"
             f"Cau hoi: {query}\n\n"
             f"Context:\n{context_text}\n\n"
@@ -117,9 +154,10 @@ class OllamaInferenceEngine:
         try:
             score_raw = str(self._llm.invoke(scoring_prompt)).strip()
             matched = re.search(r"\d+", score_raw)
-            if not matched:
-                return 6
-            value = int(matched.group())
-            return max(1, min(10, value))
+            model_score = int(matched.group()) if matched else 6
+            model_score = max(1, min(10, model_score))
+            heuristic_score = _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)
+            blended_score = round((model_score * 0.55) + (heuristic_score * 0.45))
+            return max(1, min(10, blended_score))
         except Exception:
-            return 6
+            return _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)

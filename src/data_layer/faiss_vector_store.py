@@ -18,6 +18,7 @@ from src.utils import (
     keyword_overlap_score,
     metadata_matches_filters,
     resolve_effective_source_filter,
+    source_name_from_path,
 )
 from src.data_layer.multilingual_mpnet_embeddings import build_embedder
 
@@ -142,6 +143,34 @@ def is_toc_intent(query: str) -> bool:
     )
 
 
+def filter_low_quality_chunks(docs: list[Document], query: str = "", min_length: int = 80) -> list[Document]:
+    """Filter out low-quality chunks early: TOC, very short content, duplicates."""
+    if not docs:
+        return []
+
+    toc_intent = is_toc_intent(query)
+    filtered: list[Document] = []
+    seen_content: set[str] = set()
+
+    for doc in docs:
+        content = (doc.page_content or "").strip()
+
+        if len(content) < min_length:
+            continue
+
+        if looks_like_toc(content) and not toc_intent:
+            continue
+
+        content_key = re.sub(r"\s+", " ", content.lower())[:200]
+        if content_key in seen_content:
+            continue
+
+        seen_content.add(content_key)
+        filtered.append(doc)
+
+    return filtered
+
+
 # ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
@@ -177,7 +206,7 @@ def _get_cross_encoder():
         return None
 
 
-def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
+def rerank_docs(query: str, docs: list[Document], top_k: int, aggressive: bool = False) -> list[Document]:
     if not docs:
         return []
 
@@ -198,6 +227,10 @@ def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
                 toc_penalty = 3.0 if (looks_like_toc(text) and not toc_intent) else 0.0
                 short_penalty = 1.0 if len(text.strip()) < 120 else 0.0
                 final_score = float(score) - toc_penalty - short_penalty
+
+                if aggressive and final_score < 2.0:
+                    continue
+
                 scored.append((final_score, doc))
         except Exception as error:
             print(f"Cross-encoder error: {error}, falling back to keyword overlap.")
@@ -210,10 +243,45 @@ def rerank_docs(query: str, docs: list[Document], top_k: int) -> list[Document]:
             toc_penalty = 0.18 if (looks_like_toc(text) and not toc_intent) else 0.0
             short_penalty = 0.05 if len(text.strip()) < 120 else 0.0
             score = overlap - toc_penalty - short_penalty
+
+            if aggressive and score < 0.15:
+                continue
+
             scored.append((score, doc))
 
     scored.sort(key=lambda item: item[0], reverse=True)
     return [doc for _, doc in scored[:top_k]]
+
+
+def _balance_docs_by_source(docs: list[Document], top_k: int) -> list[Document]:
+    if not docs or top_k <= 0:
+        return []
+
+    selected: list[Document] = []
+    selected_ids: set[int] = set()
+    seen_sources: set[str] = set()
+
+    # Pass 1: take the best-ranked chunk of each source first.
+    for doc in docs:
+        source = source_name_from_path(str((doc.metadata or {}).get("source", ""))) or "unknown"
+        if source in seen_sources:
+            continue
+        selected.append(doc)
+        selected_ids.add(id(doc))
+        seen_sources.add(source)
+        if len(selected) >= top_k:
+            return selected
+
+    # Pass 2: fill remaining slots by original relevance order.
+    for doc in docs:
+        if id(doc) in selected_ids:
+            continue
+        selected.append(doc)
+        selected_ids.add(id(doc))
+        if len(selected) >= top_k:
+            break
+
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +296,7 @@ def search_similar_chunks(
     file_type_filter: list[str] | None = None,
     upload_date_filter: list[str] | None = None,
     use_rerank: bool = True,
+    aggressive_rerank: bool = False,
 ) -> list[Document]:
     vector_store = load_faiss_index(index_dir)
     all_docs = list(vector_store.docstore._dict.values())
@@ -283,9 +352,18 @@ def search_similar_chunks(
         print(f"BM25 Retrieval error: {error}")
 
     unique_docs = deduplicate_docs(candidates)
+    candidate_k = max(top_k * 3, 12)
     if not use_rerank:
-        return unique_docs[:top_k]
-    return rerank_docs(query=query, docs=unique_docs, top_k=top_k)
+        ranked_docs = unique_docs[:candidate_k]
+    else:
+        ranked_docs = rerank_docs(
+            query=query,
+            docs=unique_docs,
+            top_k=candidate_k,
+            aggressive=aggressive_rerank,
+        )
+
+    return _balance_docs_by_source(ranked_docs, top_k=top_k)
 
 
 def search_vector_only_chunks(

@@ -47,6 +47,75 @@ def keyword_overlap_score(query: str, text: str) -> float:
     return len(overlap) / len(query_tokens)
 
 
+def clean_generated_answer(answer: str) -> str:
+    """Remove prompt echo / raw context blocks that some local models prepend."""
+    text = (answer or "").strip()
+    if not text:
+        return ""
+
+    text = re.sub(
+        r"^\s*(?:Câu trả lời:|Trả lời:|Answer:|Detailed Answer:)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"^\s*(?:Dữ liệu gốc|Du lieu goc)\s*:?", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*(?:Ngữ cảnh đã dùng|Ngu canh da dung|Ngữ cảnh tài liệu|Ngu canh tai lieu)\s*:?", "", text, flags=re.IGNORECASE)
+
+    start_markers = [
+        "câu hỏi trả lời:",
+        "câu trả lời:",
+        "trả lời:",
+        "answer:",
+        "detailed answer:",
+        "dữ liệu gốc:",
+        "du lieu goc:",
+    ]
+    lower = text.lower()
+    best_idx = -1
+    for marker in start_markers:
+        idx = lower.rfind(marker)
+        if idx > best_idx:
+            best_idx = idx
+
+    if best_idx >= 0:
+        candidate = text[best_idx:]
+        for marker in start_markers:
+            if candidate.lower().startswith(marker):
+                candidate = candidate[len(marker):].strip()
+                break
+        if candidate:
+            text = candidate
+
+    raw_block_markers = [
+        "dữ liệu gốc:",
+        "du lieu goc:",
+        "dữ liệu gốc",
+        "du lieu goc",
+        "ngữ cảnh đã dùng:",
+        "ngu canh da dung:",
+        "ngữ cảnh tài liệu:",
+        "ngu canh tai lieu:",
+        "context:",
+        "document context:",
+        "tổng quan tài liệu:",
+        "tong quan tai lieu:",
+    ]
+    for marker in raw_block_markers:
+        idx = text.lower().find(marker)
+        if idx != -1:
+            tail = text[idx + len(marker):].lstrip()
+            tail = tail.lstrip(":").lstrip()
+            if tail.startswith("\n"):
+                tail = tail.lstrip("\n").lstrip()
+            if tail and len(tail) < len(text):
+                # If the model prefixed raw context, keep the remainder only when it is shorter and meaningful.
+                text = tail if len(tail) < len(text) else text
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Source / path helpers
 # ---------------------------------------------------------------------------

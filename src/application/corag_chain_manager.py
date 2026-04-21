@@ -12,9 +12,13 @@ from src.application.prompt_engineering import (
     build_corag_final_prompt,
     build_corag_sufficiency_check_prompt,
 )
-from src.data_layer.faiss_vector_store import load_faiss_index, search_similar_chunks
+from src.data_layer.faiss_vector_store import (
+    filter_low_quality_chunks,
+    load_faiss_index,
+    search_similar_chunks,
+)
 from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
-from src.utils import source_name_from_path
+from src.utils import clean_generated_answer, source_name_from_path
 
 _SUFFICIENT_SIGNAL = "SUFFICIENT"
 
@@ -61,9 +65,15 @@ class CoRAGChainManager:
         return self._faiss_store
 
     def _retrieve_and_format_chunks(self, query: str) -> tuple[list[str], list[Any]]:
-        retrieved = search_similar_chunks(self.vector_store_idx, query, top_k=self.top_k)
+        retrieved = search_similar_chunks(
+            self.vector_store_idx,
+            query,
+            top_k=self.top_k,
+            aggressive_rerank=False,
+        )
+        quality_filtered = filter_low_quality_chunks(retrieved, query=query, min_length=80)
         chunks: list[str] = []
-        for idx, doc in enumerate(retrieved, start=1):
+        for idx, doc in enumerate(quality_filtered, start=1):
             content = (getattr(doc, "page_content", "") or "").strip()
             if not content:
                 continue
@@ -76,7 +86,7 @@ class CoRAGChainManager:
             header = f"[Đoạn trích từ file: {file_name} | Trang: {page}]"
             chunks.append(f"{header}\n{content}".strip())
 
-        return chunks, retrieved
+        return chunks, quality_filtered
 
     @staticmethod
     def _deduplicate_chunks(existing: list[str], new_chunks: list[str]) -> list[str]:
@@ -165,7 +175,9 @@ class CoRAGChainManager:
                 break
 
             sub_query = _extract_subquery(assessment, fallback=retrieval_text)
-            new_chunks, new_raw_docs = self._retrieve_and_format_chunks(sub_query)
+            # Keep retrieval anchored to the original question to reduce topic drift.
+            anchored_query = f"{question_text}\n{sub_query}".strip()
+            new_chunks, new_raw_docs = self._retrieve_and_format_chunks(anchored_query)
             accumulated_context = self._deduplicate_chunks(accumulated_context, new_chunks)
             all_raw_retrieved_docs.extend(new_raw_docs)
 
@@ -187,7 +199,7 @@ class CoRAGChainManager:
             document_overview="",
             chat_history=chat_history if include_history else None,
         )
-        answer = self.model_engine.generate(prompt=final_prompt, question=question_text)
+        answer = clean_generated_answer(self.model_engine.generate(prompt=final_prompt, question=question_text))
         
         # Self-RAG score
         confidence = self.model_engine.self_rag_confidence_score(

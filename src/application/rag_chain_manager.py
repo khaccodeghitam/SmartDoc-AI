@@ -7,7 +7,7 @@ from typing import Any
 from src.application.prompt_engineering import build_rag_prompt
 from src.data_layer.faiss_vector_store import load_faiss_index, search_similar_chunks
 from src.model_layer.ollama_inference_engine import OllamaInferenceEngine
-from src.utils import source_name_from_path
+from src.utils import clean_generated_answer, source_name_from_path
 
 
 @dataclass
@@ -84,7 +84,7 @@ class RAGChainManager:
             contexts=contexts,
             chat_history=chat_history if include_history else None,
         )
-        answer = self.model_engine.generate(prompt=prompt, question=question_text)
+        answer = clean_generated_answer(self.model_engine.generate(prompt=prompt, question=question_text))
 
         confidence = self.model_engine.self_rag_confidence_score(
             query=question_text, answer=answer, docs=retrieved
