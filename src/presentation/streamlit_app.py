@@ -90,6 +90,7 @@ def _init_state() -> None:
     st.session_state.setdefault("qa_generation_in_progress", False)
     st.session_state.setdefault("qa_requires_pause", False)
     st.session_state.setdefault("qa_submit_requested", False)
+    st.session_state.setdefault("co_rag_enabled", True)
 
 
 def _clear_pending_qa_state() -> None:
@@ -388,17 +389,36 @@ def _finalize_pending_turn(turn_id: str, selected_source: str) -> bool:
 
         rag_answer = str(item.get("rag_answer", "")).strip()
         corag_answer = str(item.get("corag_answer", "")).strip()
+        rag_confidence = item.get("rag_confidence")
+        corag_confidence = item.get("corag_confidence")
         if selected_source == "rag":
             answer = rag_answer
+            answer_confidence = rag_confidence
+            answer_confidence_source = "rag"
         elif selected_source == "corag":
             answer = corag_answer
+            answer_confidence = corag_confidence
+            answer_confidence_source = "corag"
         elif selected_source == "pause":
-            answer = corag_answer or rag_answer or "Dừng trả lời"
+            if corag_answer:
+                answer = corag_answer
+                answer_confidence = corag_confidence
+                answer_confidence_source = "corag"
+            elif rag_answer:
+                answer = rag_answer
+                answer_confidence = rag_confidence
+                answer_confidence_source = "rag"
+            else:
+                answer = "Dừng trả lời"
+                answer_confidence = None
+                answer_confidence_source = "pause"
         else:
             return False
 
         item["answer"] = answer
         item["selected_source"] = selected_source
+        item["answer_confidence"] = answer_confidence
+        item["answer_confidence_source"] = answer_confidence_source
         item["is_pending_selection"] = False
         item["finalized_at"] = datetime.now().strftime("%H:%M:%S")
         _sync_current_session_history(sessions, current_session)
@@ -419,10 +439,12 @@ def _save_selected_answer_from_pending(source: str) -> bool:
 
     if source == "rag":
         answer = str(rag_data.get("answer", "")).strip()
+        answer_confidence = rag_data.get("confidence")
         if not answer:
             return False
     elif source == "corag":
         answer = str(corag_data.get("answer", "")).strip()
+        answer_confidence = corag_data.get("confidence")
         if not answer:
             return False
     else:
@@ -434,7 +456,13 @@ def _save_selected_answer_from_pending(source: str) -> bool:
         if not _finalize_pending_turn(turn_id=turn_id, selected_source=source):
             return False
     else:
-        _append_chat(question=question, answer=answer, sources=[])
+        _append_chat(
+            question=question,
+            answer=answer,
+            sources=[],
+            answer_confidence=answer_confidence,
+            answer_source=source,
+        )
 
     _append_history("save", f"Đã lưu câu trả lời {source.upper()} cho câu hỏi: {question[:90]}")
     _clear_pending_qa_state()
@@ -453,10 +481,16 @@ def _pause_and_store_current_question(current_input: str) -> bool:
 
         if corag_answer:
             answer = corag_answer
+            answer_confidence = (pending.get("corag") or {}).get("confidence")
+            answer_source = "corag"
         elif rag_answer:
             answer = rag_answer
+            answer_confidence = (pending.get("rag") or {}).get("confidence")
+            answer_source = "rag"
         else:
             answer = "Dừng trả lời"
+            answer_confidence = None
+            answer_source = "pause"
 
         if not question:
             return False
@@ -466,7 +500,13 @@ def _pause_and_store_current_question(current_input: str) -> bool:
             if not _finalize_pending_turn(turn_id=turn_id, selected_source="pause"):
                 return False
         else:
-            _append_chat(question=question, answer=answer, sources=[])
+            _append_chat(
+                question=question,
+                answer=answer,
+                sources=[],
+                answer_confidence=answer_confidence,
+                answer_source=answer_source,
+            )
 
         _append_history("pause", f"Pause tại câu hỏi: {question[:90]}")
         _clear_pending_qa_state()
@@ -477,7 +517,7 @@ def _pause_and_store_current_question(current_input: str) -> bool:
     if not question:
         return False
 
-    _append_chat(question=question, answer="Dừng trả lời", sources=[])
+    _append_chat(question=question, answer="Dừng trả lời", sources=[], answer_confidence=None, answer_source="pause")
     _append_history("pause", f"Pause trước khi sinh câu trả lời: {question[:90]}")
     _request_clear_qa_query()
     return True
@@ -517,7 +557,13 @@ def _append_history(kind: str, detail: str) -> None:
     st.session_state["retrieval_history"] = history[:10]
 
 
-def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
+def _append_chat(
+    question: str,
+    answer: str,
+    sources: list[dict],
+    answer_confidence: int | None = None,
+    answer_source: str = "single",
+) -> None:
     sessions, current_session = _get_or_create_active_session(question)
     history_arr = current_session.setdefault("history", [])
     history_arr.insert(0, {
@@ -527,7 +573,9 @@ def _append_chat(question: str, answer: str, sources: list[dict]) -> None:
         "answer": answer,
         "sources": sources,
         "is_pending_selection": False,
-        "selected_source": "single",
+        "selected_source": answer_source,
+        "answer_confidence": answer_confidence,
+        "answer_confidence_source": answer_source,
     })
     _sync_current_session_history(sessions, current_session)
 
@@ -588,6 +636,20 @@ def _call_with_supported_kwargs(func, **kwargs):
     except Exception:
         allowed = kwargs
     return func(**allowed)
+
+
+def _create_live_activity_stream(title: str):
+    status_box = st.status(title, expanded=True)
+
+    def _emit(message: str, state: str = "running") -> None:
+        icon = "🔄"
+        if state == "done":
+            icon = "✅"
+        elif state == "error":
+            icon = "❌"
+        status_box.write(f"{icon} {message}")
+
+    return status_box, _emit
 
 
 def _render_result_card(index: int, doc) -> None:
@@ -1150,6 +1212,8 @@ def main() -> None:
                     st.write(item["question"])
                 with st.chat_message("assistant"):
                     st.markdown(item.get("answer", ""))
+                    if item.get("answer_confidence") is not None:
+                        st.caption(f"Độ tin cậy đã lưu: {item.get('answer_confidence')}/10")
             st.markdown("---")
 
         if not last_index_dir:
@@ -1158,16 +1222,28 @@ def main() -> None:
             _card_end()
         else:
             if st.session_state.get("clear_qa_query_pending", False):
-                st.session_state.pop("qa_query", None)
+                st.session_state["qa_query"] = ""
                 st.session_state["clear_qa_query_pending"] = False
+
+            pending_qa = st.session_state.get("pending_qa")
+            co_rag_enabled = st.toggle(
+                "Bật suy nghĩ thông minh Co-RAG",
+                key="co_rag_enabled",
+                disabled=bool(pending_qa) or bool(st.session_state.get("qa_generation_in_progress", False)),
+                help="Tắt: chỉ chạy Basic RAG. Bật: chạy cả Basic RAG và Co-RAG để so sánh.",
+            )
+            st.caption(
+                "Chế độ hiện tại: "
+                + ("BẬT Co-RAG (trả cả RAG và Co-RAG)" if co_rag_enabled else "TẮT Co-RAG (chỉ chạy và trả RAG)")
+            )
+
             qa_query = st.text_area(
                 "Nhập câu hỏi", placeholder="Ví dụ: Có bao nhiêu bài tập trong tài liệu này?",
                 height=80, key="qa_query",
             )
-            pending_qa = st.session_state.get("pending_qa")
             action_col_ask, action_col_pause, _ = st.columns([0.23, 0.05, 0.72], gap="small")
             action_col_ask.button(
-                "Tranh luận / So sánh AI",
+                "Tranh luận / So sánh AI" if co_rag_enabled else "Hỏi nhanh với RAG",
                 type="primary",
                 key="qa_button",
                 use_container_width=True,
@@ -1192,35 +1268,45 @@ def main() -> None:
                 else:
                     st.session_state["qa_requires_pause"] = True
                     original_query = qa_query.strip()
+                    live_status, emit_live = _create_live_activity_stream("AI đang xử lý theo thời gian thực...")
+                    emit_live("Đang phân tích câu hỏi và lịch sử hội thoại...")
                     history_for_rewrite = list(st.session_state.get("chat_history", []))
                     rewritten_query, used_rewrite = rewrite_query_with_history(
                         query=original_query,
                         chat_history=history_for_rewrite,
                         model_name=st.session_state.get("active_model", OLLAMA_MODEL),
                     )
+                    emit_live("Đã chuẩn hóa truy vấn, đang quyết định mức dùng lịch sử hội thoại...", state="done")
                     include_history = should_include_history_in_prompt(
                         query=original_query,
                         used_rewrite=used_rewrite,
                     )
+                    emit_live("Đang khởi tạo pipeline RAG...")
 
                     # Khởi tạo model engine dùng chung
                     model_engine = OllamaInferenceEngine(model_name=st.session_state.get("active_model", OLLAMA_MODEL))
                     manager = RAGChainManager(index_dir=last_index_dir, model_engine=model_engine)
-                    co_manager = CoRAGChainManager(index_dir=last_index_dir, model_engine=model_engine, top_k=int(top_k))
 
                     rag_ans, rag_err = None, None
                     corag_ans, corag_err = None, None
 
-                    status_col_rag, status_col_corag = st.columns(2)
-                    with status_col_rag:
+                    if co_rag_enabled:
+                        status_col_rag, status_col_corag = st.columns(2)
+                        with status_col_rag:
+                            st.caption("🤖 Basic RAG")
+                            rag_status_slot = st.empty()
+                            rag_live_answer_slot = st.empty()
+                            rag_status_slot.info("Đang chạy RAG...")
+                        with status_col_corag:
+                            st.caption("🧠 Co-RAG")
+                            corag_status_slot = st.empty()
+                            corag_status_slot.info("Đang chạy Co-RAG...")
+                    else:
                         st.caption("🤖 Basic RAG")
                         rag_status_slot = st.empty()
                         rag_live_answer_slot = st.empty()
                         rag_status_slot.info("Đang chạy RAG...")
-                    with status_col_corag:
-                        st.caption("🧠 Co-RAG")
-                        corag_status_slot = st.empty()
-                        corag_status_slot.info("Đang chạy Co-RAG...")
+                        corag_status_slot = None
 
                     try:
                         rag_ans = manager.ask(
@@ -1229,42 +1315,92 @@ def main() -> None:
                             retrieval_query=rewritten_query,
                             chat_history=history_for_rewrite,
                             include_history=include_history,
+                            progress_callback=lambda msg: emit_live(f"RAG: {msg}"),
                         )
                     except Exception as e:
                         rag_err = e
+                        emit_live(f"RAG gặp lỗi: {e}", state="error")
                     finally:
                         if rag_err:
                             rag_status_slot.error(f"RAG lỗi: {rag_err}")
-                            corag_status_slot.warning("Co-RAG đang chờ sau RAG...")
+                            if corag_status_slot is not None:
+                                corag_status_slot.warning("Co-RAG đang chờ sau RAG...")
                         else:
                             rag_status_slot.success("RAG đã hoàn tất")
                             rag_live_answer_slot.markdown("**Câu trả lời RAG (hiển thị ngay):**")
                             rag_live_answer_slot.markdown(rag_ans.answer)
-                            corag_status_slot.info("Co-RAG đang tiếp tục xử lý...")
+                            if corag_status_slot is not None:
+                                corag_status_slot.info("Co-RAG đang tiếp tục xử lý...")
 
-                    if not rag_err:
+                    if co_rag_enabled and not rag_err:
+                        emit_live("Đang khởi tạo pipeline Co-RAG đa vòng...")
+                        co_manager = CoRAGChainManager(index_dir=last_index_dir, model_engine=model_engine, top_k=int(top_k))
                         try:
                             corag_ans = co_manager.ask(
                                 question=original_query,
                                 retrieval_query=rewritten_query,
                                 chat_history=history_for_rewrite,
                                 include_history=include_history,
+                                progress_callback=lambda msg: emit_live(f"Co-RAG: {msg}"),
                             )
                         except Exception as e:
                             corag_err = e
+                            emit_live(f"Co-RAG gặp lỗi: {e}", state="error")
 
-                    if corag_err:
-                        corag_status_slot.error(f"Co-RAG lỗi: {corag_err}")
-                    elif corag_ans:
-                        corag_status_slot.success("Co-RAG đã hoàn tất")
-                    elif rag_err:
-                        corag_status_slot.warning("Không chạy Co-RAG vì RAG lỗi.")
-                    else:
-                        corag_status_slot.warning("Co-RAG không trả về kết quả.")
+                    if co_rag_enabled and corag_status_slot is not None:
+                        if corag_err:
+                            corag_status_slot.error(f"Co-RAG lỗi: {corag_err}")
+                        elif corag_ans:
+                            corag_status_slot.success("Co-RAG đã hoàn tất")
+                        elif rag_err:
+                            corag_status_slot.warning("Không chạy Co-RAG vì RAG lỗi.")
+                        else:
+                            corag_status_slot.warning("Co-RAG không trả về kết quả.")
 
                     # Once Co-RAG is done, remove the temporary live RAG preview
                     # to avoid duplicated RAG rendering above and below.
                     rag_live_answer_slot.empty()
+
+                    # Chế độ chỉ RAG: lưu ngay câu trả lời vào lịch sử chat.
+                    if not co_rag_enabled:
+                        if rag_err or not rag_ans:
+                            st.warning("Không thể lưu vì RAG chưa trả được câu trả lời.")
+                            st.session_state["qa_requires_pause"] = False
+                            live_status.update(label="Hoàn tất với lỗi ở chế độ RAG", state="error", expanded=True)
+                        else:
+                            _append_chat(
+                                question=original_query,
+                                answer=rag_ans.answer,
+                                sources=[],
+                                answer_confidence=rag_ans.confidence_score,
+                                answer_source="rag",
+                            )
+                            _request_clear_qa_query()
+                            st.session_state["qa_requires_pause"] = False
+                            st.success("Đã lưu câu trả lời RAG.")
+                            emit_live("Đã lưu câu trả lời RAG vào lịch sử phiên chat.", state="done")
+                            live_status.update(label="Hoàn tất chế độ chỉ RAG", state="complete", expanded=False)
+
+                        _append_history("qa", original_query)
+                        _append_history(
+                            "rewrite",
+                            (
+                                f"original='{original_query[:120]}' | "
+                                f"rewritten='{rewritten_query[:120]}' | "
+                                f"include_history={include_history}"
+                            ),
+                        )
+                        st.session_state["qa_submit_requested"] = False
+                        st.session_state["qa_generation_in_progress"] = False
+                        st.rerun()
+
+                    if rag_err:
+                        live_status.update(label="Hoàn tất với lỗi ở RAG", state="error", expanded=True)
+                    elif corag_err:
+                        live_status.update(label="Hoàn tất với lỗi ở Co-RAG", state="error", expanded=True)
+                    else:
+                        emit_live("Đang chuẩn bị giao diện chọn kết quả RAG/Co-RAG để lưu...", state="done")
+                        live_status.update(label="Hoàn tất xử lý RAG + Co-RAG", state="complete", expanded=False)
 
                     pending_payload = {
                         "question": original_query,

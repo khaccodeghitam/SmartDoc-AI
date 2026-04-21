@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from src.application.prompt_engineering import build_rag_prompt
 from src.data_layer.faiss_vector_store import load_faiss_index, search_similar_chunks
@@ -33,6 +33,16 @@ class RAGChainManager:
         return self._faiss_store
 
     @staticmethod
+    def _notify_progress(progress_callback: Callable[[str], None] | None, message: str) -> None:
+        if not progress_callback:
+            return
+        try:
+            progress_callback(message)
+        except Exception:
+            # Never break QA flow if UI progress callback fails.
+            pass
+
+    @staticmethod
     def _format_context_chunks(documents: list[Any]) -> list[str]:
         contexts: list[str] = []
         for idx, doc in enumerate(documents, start=1):
@@ -57,6 +67,7 @@ class RAGChainManager:
         retrieval_query: str | None = None,
         chat_history: list[dict] | None = None,
         include_history: bool = False,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> RAGAnswer:
         question_text = question.strip()
         if not question_text:
@@ -67,10 +78,12 @@ class RAGChainManager:
         if not retrieval_text:
             retrieval_text = question_text
 
+        self._notify_progress(progress_callback, "Đang phân tích ngữ cảnh và truy xuất tài liệu liên quan...")
         retrieved = search_similar_chunks(self.vector_store_idx, retrieval_text, top_k=top_k)
         contexts = self._format_context_chunks(retrieved)
 
         if not contexts:
+            self._notify_progress(progress_callback, "Không tìm thấy ngữ cảnh phù hợp trong tài liệu.")
             return RAGAnswer(
                 answer="Không tìm thấy ngữ cảnh phù hợp trong tài liệu.",
                 context_chunks=[],
@@ -79,16 +92,20 @@ class RAGChainManager:
                 raw_docs=[],
             )
 
+        self._notify_progress(progress_callback, "Đang xây dựng prompt từ ngữ cảnh truy xuất...")
         prompt = build_rag_prompt(
             question=question_text,
             contexts=contexts,
             chat_history=chat_history if include_history else None,
         )
+        self._notify_progress(progress_callback, "Đang tìm câu trả lời bằng mô hình ngôn ngữ...")
         answer = clean_generated_answer(self.model_engine.generate(prompt=prompt, question=question_text))
 
+        self._notify_progress(progress_callback, "Đang tóm tắt và chấm độ tự tin câu trả lời...")
         confidence = self.model_engine.self_rag_confidence_score(
             query=question_text, answer=answer, docs=retrieved
         )
+        self._notify_progress(progress_callback, "RAG đã hoàn tất.")
 
         return RAGAnswer(
             answer=answer,

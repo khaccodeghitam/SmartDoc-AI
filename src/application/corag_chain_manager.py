@@ -6,7 +6,7 @@ Thuộc Application Layer — điều phối vòng lặp truy xuất đa bước
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from src.application.prompt_engineering import (
     build_corag_final_prompt,
@@ -63,6 +63,30 @@ class CoRAGChainManager:
         if self._faiss_store is None:
             self._faiss_store = load_faiss_index(self.vector_store_idx)
         return self._faiss_store
+
+    @staticmethod
+    def _notify_progress(progress_callback: Callable[[str], None] | None, message: str) -> None:
+        if not progress_callback:
+            return
+        try:
+            progress_callback(message)
+        except Exception:
+            # Never break QA flow if UI progress callback fails.
+            pass
+
+    @staticmethod
+    def _is_explicit_sufficient_signal(assessment: str) -> bool:
+        """Accept only explicit SUFFICIENT responses to avoid false positives like INSUFFICIENT."""
+        normalized = (assessment or "").strip().upper()
+        if not normalized:
+            return False
+
+        first_line = normalized.splitlines()[0].strip()
+        if not first_line:
+            return False
+
+        first_word = first_line.split()[0].strip(".,:;!?()[]{}\"'`")
+        return first_word == _SUFFICIENT_SIGNAL
 
     def _retrieve_and_format_chunks(self, query: str) -> tuple[list[str], list[Any]]:
         retrieved = search_similar_chunks(
@@ -121,6 +145,7 @@ class CoRAGChainManager:
         chat_history: list[dict] | None = None,
         include_history: bool = False,
         stop_signal: Any | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> CoRAGAnswer:
         question_text = question.strip()
         if not question_text:
@@ -129,6 +154,7 @@ class CoRAGChainManager:
         if not retrieval_text:
             retrieval_text = question_text
 
+        self._notify_progress(progress_callback, "Đang khởi tạo Co-RAG và kiểm tra dữ liệu truy xuất...")
         store = self._get_faiss()
         all_docs = list(store.docstore._dict.values())
         if not all_docs:
@@ -141,6 +167,7 @@ class CoRAGChainManager:
         # Vòng 1
         if self._is_cancelled(stop_signal):
             raise RuntimeError("Co-RAG cancelled by user.")
+        self._notify_progress(progress_callback, "Co-RAG vòng 1: đang truy xuất ngữ cảnh ban đầu...")
         initial_chunks, raw_docs = self._retrieve_and_format_chunks(retrieval_text)
         all_raw_retrieved_docs.extend(raw_docs)
 
@@ -158,6 +185,10 @@ class CoRAGChainManager:
         for round_num in range(2, self.max_rounds + 1):
             if self._is_cancelled(stop_signal):
                 raise RuntimeError("Co-RAG cancelled by user.")
+            self._notify_progress(
+                progress_callback,
+                f"Co-RAG vòng {round_num - 1}: đang đánh giá mức độ đủ thông tin...",
+            )
             assessment = self._assess_sufficiency(
                 question=question_text,
                 accumulated_context=accumulated_context,
@@ -171,12 +202,17 @@ class CoRAGChainManager:
                 llm_assessment=assessment,
             )
 
-            if _SUFFICIENT_SIGNAL.upper() in assessment.upper():
+            if self._is_explicit_sufficient_signal(assessment):
+                self._notify_progress(progress_callback, "Ngữ cảnh đã đủ, chuyển sang bước tổng hợp câu trả lời Co-RAG...")
                 break
 
             sub_query = _extract_subquery(assessment, fallback=retrieval_text)
             # Keep retrieval anchored to the original question to reduce topic drift.
             anchored_query = f"{question_text}\n{sub_query}".strip()
+            self._notify_progress(
+                progress_callback,
+                f"Co-RAG vòng {round_num}: đang mở rộng truy xuất với sub-query mới...",
+            )
             new_chunks, new_raw_docs = self._retrieve_and_format_chunks(anchored_query)
             accumulated_context = self._deduplicate_chunks(accumulated_context, new_chunks)
             all_raw_retrieved_docs.extend(new_raw_docs)
@@ -193,6 +229,7 @@ class CoRAGChainManager:
         # Trả lời vòng cuối
         if self._is_cancelled(stop_signal):
             raise RuntimeError("Co-RAG cancelled by user.")
+        self._notify_progress(progress_callback, "Co-RAG: đang tổng hợp và tóm tắt câu trả lời cuối...")
         final_prompt = build_corag_final_prompt(
             question=question_text,
             contexts=accumulated_context,
@@ -202,9 +239,11 @@ class CoRAGChainManager:
         answer = clean_generated_answer(self.model_engine.generate(prompt=final_prompt, question=question_text))
         
         # Self-RAG score
+        self._notify_progress(progress_callback, "Co-RAG: đang chấm độ tự tin kết quả...")
         confidence = self.model_engine.self_rag_confidence_score(
             query=question_text, answer=answer, docs=all_raw_retrieved_docs
         )
+        self._notify_progress(progress_callback, "Co-RAG đã hoàn tất.")
 
         return CoRAGAnswer(
             answer=answer,
