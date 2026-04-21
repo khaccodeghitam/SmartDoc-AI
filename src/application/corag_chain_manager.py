@@ -88,14 +88,21 @@ class CoRAGChainManager:
         first_word = first_line.split()[0].strip(".,:;!?()[]{}\"'`")
         return first_word == _SUFFICIENT_SIGNAL
 
-    def _retrieve_and_format_chunks(self, query: str) -> tuple[list[str], list[Any]]:
+    def _retrieve_and_format_chunks(
+        self,
+        query: str,
+        source_filter: list[str] | None = None,
+    ) -> tuple[list[str], list[Any]]:
         retrieved = search_similar_chunks(
             self.vector_store_idx,
             query,
             top_k=self.top_k,
             aggressive_rerank=False,
+            source_filter=source_filter,
         )
-        quality_filtered = filter_low_quality_chunks(retrieved, query=query, min_length=80)
+        # Keep shorter chunks too, because exercise headings like "BÀI TẬP 2..."
+        # are often concise but critical for counting questions.
+        quality_filtered = filter_low_quality_chunks(retrieved, query=query, min_length=20)
         chunks: list[str] = []
         for idx, doc in enumerate(quality_filtered, start=1):
             content = (getattr(doc, "page_content", "") or "").strip()
@@ -142,6 +149,7 @@ class CoRAGChainManager:
         self,
         question: str,
         retrieval_query: str | None = None,
+        source_filter: list[str] | None = None,
         chat_history: list[dict] | None = None,
         include_history: bool = False,
         stop_signal: Any | None = None,
@@ -168,7 +176,10 @@ class CoRAGChainManager:
         if self._is_cancelled(stop_signal):
             raise RuntimeError("Co-RAG cancelled by user.")
         self._notify_progress(progress_callback, "Co-RAG vòng 1: đang truy xuất ngữ cảnh ban đầu...")
-        initial_chunks, raw_docs = self._retrieve_and_format_chunks(retrieval_text)
+        initial_chunks, raw_docs = self._retrieve_and_format_chunks(
+            retrieval_text,
+            source_filter=source_filter,
+        )
         all_raw_retrieved_docs.extend(raw_docs)
 
         accumulated_context = self._deduplicate_chunks(accumulated_context, initial_chunks)
@@ -213,7 +224,10 @@ class CoRAGChainManager:
                 progress_callback,
                 f"Co-RAG vòng {round_num}: đang mở rộng truy xuất với sub-query mới...",
             )
-            new_chunks, new_raw_docs = self._retrieve_and_format_chunks(anchored_query)
+            new_chunks, new_raw_docs = self._retrieve_and_format_chunks(
+                anchored_query,
+                source_filter=source_filter,
+            )
             accumulated_context = self._deduplicate_chunks(accumulated_context, new_chunks)
             all_raw_retrieved_docs.extend(new_raw_docs)
 
@@ -263,10 +277,7 @@ def _extract_subquery(llm_response: str, fallback: str) -> str:
             candidate = llm_response[idx + len(prefix):].strip().split("\n")[0].strip()
             if candidate:
                 return candidate
-
-    for line in llm_response.split("\n"):
-        stripped = line.strip()
-        if stripped:
-            return stripped
-
+    # If the assessment does not provide an explicit sub-query field,
+    # fall back to the original retrieval query to avoid drifting to
+    # noisy phrases like "CHƯA ĐỦ: TRẢ LỜI BỔ SUNG".
     return fallback

@@ -97,7 +97,7 @@ class OllamaInferenceEngine:
             temperature=self.temperature,
             num_gpu=99,
             num_thread=8,
-            num_ctx=3000,
+            num_ctx=2560,
         )
 
     def _get_llm(self, model: str) -> OllamaLLM:
@@ -107,7 +107,19 @@ class OllamaInferenceEngine:
             temperature=self.temperature,
             num_gpu=99,
             num_thread=8,
-            num_ctx=3000,
+            num_ctx=2560,
+        )
+
+    def _get_scoring_llm(self) -> OllamaLLM:
+        # Confidence scoring can use a lighter model to cut latency significantly.
+        scoring_model = FALLBACK_MODELS[0] if FALLBACK_MODELS else self.active_model
+        return OllamaLLM(
+            model=scoring_model,
+            base_url=OLLAMA_BASE_URL,
+            temperature=0.0,
+            num_gpu=99,
+            num_thread=8,
+            num_ctx=1024,
         )
 
     def generate(self, prompt: str, question: str = "", document_name: str = "") -> str:
@@ -152,7 +164,8 @@ class OllamaInferenceEngine:
             "Diem (1-10):"
         )
         try:
-            score_raw = str(self._llm.invoke(scoring_prompt)).strip()
+            scoring_llm = self._get_scoring_llm()
+            score_raw = str(scoring_llm.invoke(scoring_prompt)).strip()
             matched = re.search(r"\d+", score_raw)
             model_score = int(matched.group()) if matched else 6
             model_score = max(1, min(10, model_score))

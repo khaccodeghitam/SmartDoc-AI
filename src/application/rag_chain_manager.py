@@ -65,6 +65,7 @@ class RAGChainManager:
         question: str,
         top_k: int = 4,
         retrieval_query: str | None = None,
+        source_filter: list[str] | None = None,
         chat_history: list[dict] | None = None,
         include_history: bool = False,
         progress_callback: Callable[[str], None] | None = None,
@@ -79,7 +80,12 @@ class RAGChainManager:
             retrieval_text = question_text
 
         self._notify_progress(progress_callback, "Đang phân tích ngữ cảnh và truy xuất tài liệu liên quan...")
-        retrieved = search_similar_chunks(self.vector_store_idx, retrieval_text, top_k=top_k)
+        retrieved = search_similar_chunks(
+            self.vector_store_idx,
+            retrieval_text,
+            top_k=top_k,
+            source_filter=source_filter,
+        )
         contexts = self._format_context_chunks(retrieved)
 
         if not contexts:

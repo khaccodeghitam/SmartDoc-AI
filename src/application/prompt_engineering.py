@@ -79,7 +79,8 @@ def build_rag_prompt(
         multi_part_hint = (
             f"Câu hỏi gồm {len(question_parts)} ý. BẮT BUỘC trả lời đủ từng ý theo thứ tự 1..{len(question_parts)}. "
             "Ý nào không thấy trong tài liệu thì ghi rõ: 'Không thấy thông tin trong tài liệu'.\n"
-            "Mỗi ý trả lời tối đa 1-2 câu, không lan man.\n"
+            "Mỗi ý trả lời 2-4 gạch đầu dòng ngắn gọn, ưu tiên đủ ý hơn là quá ngắn.\n"
+            "KHÔNG tự suy diễn mốc thời gian/sự kiện ngoài ngữ cảnh đã cho.\n"
         )
 
     doc_overview_text = f"Tổng quan tài liệu:\n{document_overview}\n\n" if document_overview else ""
@@ -89,7 +90,9 @@ def build_rag_prompt(
             "Dựa vào ngữ cảnh trả lời câu hỏi. Trả lời ngắn gọn, chính xác.\n"
             "Nếu không có thông tin, nói rõ là không tìm thấy.\n"
             "Kèm tên file gốc khi trích dẫn [file.pdf], không gọi chung chung.\n"
-            "Không thêm thông tin ngoài context. Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n\n"
+            "Không thêm thông tin ngoài context. Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n"
+            "Không tự bịa mốc năm, sự kiện, tên đại hội nếu context không có.\n"
+            "Với câu nhiều ý, bắt buộc định dạng: 'Ý 1:', 'Ý 2:', ... để tránh bỏ sót.\n\n"
             f"{multi_part_hint}"
             f"{doc_overview_text}"
             f"{history_text}"

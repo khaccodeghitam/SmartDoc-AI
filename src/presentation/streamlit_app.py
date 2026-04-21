@@ -89,8 +89,10 @@ def _init_state() -> None:
     st.session_state.setdefault("clear_qa_query_pending", False)
     st.session_state.setdefault("qa_generation_in_progress", False)
     st.session_state.setdefault("qa_requires_pause", False)
+    st.session_state.setdefault("qa_pause_requested", False)
     st.session_state.setdefault("qa_submit_requested", False)
     st.session_state.setdefault("co_rag_enabled", True)
+    st.session_state.setdefault("session_reset_counter", 0)
 
 
 def _clear_pending_qa_state() -> None:
@@ -473,24 +475,35 @@ def _save_selected_answer_from_pending(source: str) -> bool:
 
 def _pause_and_store_current_question(current_input: str) -> bool:
     pending = st.session_state.get("pending_qa")
+    co_rag_enabled = st.session_state.get("co_rag_enabled", True)
     if pending:
         turn_id = str(pending.get("turn_id", "")).strip()
         question = str(pending.get("question", "")).strip()
         rag_answer = str((pending.get("rag") or {}).get("answer", "")).strip()
         corag_answer = str((pending.get("corag") or {}).get("answer", "")).strip()
 
-        if corag_answer:
-            answer = corag_answer
-            answer_confidence = (pending.get("corag") or {}).get("confidence")
-            answer_source = "corag"
-        elif rag_answer:
-            answer = rag_answer
-            answer_confidence = (pending.get("rag") or {}).get("confidence")
-            answer_source = "rag"
+        if not co_rag_enabled:
+            if rag_answer:
+                answer = rag_answer
+                answer_confidence = (pending.get("rag") or {}).get("confidence")
+                answer_source = "rag"
+            else:
+                answer = "Dừng trả lời"
+                answer_confidence = None
+                answer_source = "pause"
         else:
-            answer = "Dừng trả lời"
-            answer_confidence = None
-            answer_source = "pause"
+            if rag_answer:
+                answer = rag_answer
+                answer_confidence = (pending.get("rag") or {}).get("confidence")
+                answer_source = "rag"
+            elif corag_answer:
+                answer = corag_answer
+                answer_confidence = (pending.get("corag") or {}).get("confidence")
+                answer_source = "corag"
+            else:
+                answer = "Dừng trả lời"
+                answer_confidence = None
+                answer_source = "pause"
 
         if not question:
             return False
@@ -759,6 +772,9 @@ def _render_chat_sidebar() -> None:
             sources=[], file_types=[], upload_dates=[]
         )
         
+        # Increment session_reset_counter to force file_uploader widget reset
+        st.session_state["session_reset_counter"] += 1
+        
         st.rerun()
         
     sessions = st.session_state.get("chat_sessions", [])
@@ -857,7 +873,12 @@ def main() -> None:
         st.markdown("<br>", unsafe_allow_html=True)
 
         with st.expander("⚙️ Cấu hình hệ thống & Index", expanded=False):
-            uploaded_files = st.file_uploader("Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)", type=["pdf", "docx"], accept_multiple_files=True)
+            uploaded_files = st.file_uploader(
+                "Upload tài liệu PDF/DOCX (Có thể chọn nhiều file)",
+                type=["pdf", "docx"],
+                accept_multiple_files=True,
+                key=f"file_uploader_{st.session_state.get('active_session_id', 'new')}_{st.session_state.get('session_reset_counter', 0)}"
+            )
             chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=DEFAULT_CHUNK_SIZE, step=100)
             chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=DEFAULT_CHUNK_OVERLAP, step=20)
             top_k = st.number_input("Top-k search", min_value=1, max_value=10, value=DEFAULT_TOP_K, step=1)
@@ -1256,8 +1277,49 @@ def main() -> None:
             )
             pause_clicked = action_col_pause.button("⏸", key="qa_pause_button", help="Pause câu hỏi hiện tại", use_container_width=True)
 
+            if pause_clicked:
+                st.session_state["qa_pause_requested"] = True
+
+            if st.session_state.get("qa_pause_requested", False) and st.session_state.get("pending_qa"):
+                if _pause_and_store_current_question(qa_query):
+                    st.session_state["qa_pause_requested"] = False
+                    st.session_state["qa_requires_pause"] = False
+                    st.session_state["qa_submit_requested"] = False
+                    st.success("Đã dừng trả lời")
+                    st.rerun()
+                else:
+                    st.session_state["qa_pause_requested"] = False
+
+            if (
+                st.session_state.get("qa_pause_requested", False)
+                and not st.session_state.get("pending_qa")
+                and not st.session_state.get("qa_submit_requested", False)
+            ):
+                if _pause_and_store_current_question(qa_query):
+                    st.session_state["qa_pause_requested"] = False
+                    st.session_state["qa_requires_pause"] = False
+                    st.success("Đã dừng trả lời")
+                    st.rerun()
+                else:
+                    st.warning("Không có câu hỏi để pause. Hãy nhập câu hỏi hoặc tạo một lượt hỏi trước.")
+                    st.session_state["qa_pause_requested"] = False
+
             if st.session_state.get("qa_submit_requested", False):
-                if st.session_state.get("pending_qa"):
+                if st.session_state.get("qa_pause_requested", False):
+                    _append_chat(
+                        question=qa_query.strip(),
+                        answer="Dừng trả lời",
+                        sources=[],
+                        answer_confidence=None,
+                        answer_source="pause",
+                    )
+                    st.session_state["qa_pause_requested"] = False
+                    st.session_state["qa_requires_pause"] = False
+                    st.session_state["qa_submit_requested"] = False
+                    st.session_state["qa_generation_in_progress"] = False
+                    st.success("Đã dừng trả lời")
+                    st.rerun()
+                elif st.session_state.get("pending_qa"):
                     st.warning("Bạn cần Lưu một câu trả lời hoặc bấm Pause trước khi hỏi câu mới.")
                     st.session_state["qa_submit_requested"] = False
                     st.session_state["qa_generation_in_progress"] = False
@@ -1266,8 +1328,13 @@ def main() -> None:
                     st.session_state["qa_submit_requested"] = False
                     st.session_state["qa_generation_in_progress"] = False
                 else:
+
                     st.session_state["qa_requires_pause"] = True
                     original_query = qa_query.strip()
+                    effective_filter = sidebar_source_filter if sidebar_source_filter else None
+                    effective_top_k = int(top_k)
+                    if effective_filter and len(effective_filter) > 0:
+                        effective_top_k = int(top_k) * len(effective_filter)
                     live_status, emit_live = _create_live_activity_stream("AI đang xử lý theo thời gian thực...")
                     emit_live("Đang phân tích câu hỏi và lịch sử hội thoại...")
                     history_for_rewrite = list(st.session_state.get("chat_history", []))
@@ -1311,8 +1378,9 @@ def main() -> None:
                     try:
                         rag_ans = manager.ask(
                             question=original_query,
-                            top_k=int(top_k),
+                            top_k=effective_top_k,
                             retrieval_query=rewritten_query,
+                            source_filter=effective_filter,
                             chat_history=history_for_rewrite,
                             include_history=include_history,
                             progress_callback=lambda msg: emit_live(f"RAG: {msg}"),
@@ -1331,21 +1399,47 @@ def main() -> None:
                             rag_live_answer_slot.markdown(rag_ans.answer)
                             if corag_status_slot is not None:
                                 corag_status_slot.info("Co-RAG đang tiếp tục xử lý...")
+                            
+                            # Tạo pending_qa ngay khi RAG xong để pause có thể lấy RAG answer
+                            if co_rag_enabled:
+                                rag_payload = {
+                                    "answer": rag_ans.answer,
+                                    "confidence": rag_ans.confidence_score,
+                                    "contexts": rag_ans.context_chunks,
+                                    "error": "",
+                                }
+                                temp_pending = _append_pending_dual_chat(
+                                    question=original_query,
+                                    rewritten_query=rewritten_query,
+                                    include_history=include_history,
+                                    used_rewrite=used_rewrite,
+                                    rag_data=rag_payload,
+                                    corag_data={"answer": "", "confidence": None, "total_rounds": 0, "iterations": [], "error": ""},
+                                    corag_state="pending",
+                                )
+                                if temp_pending:
+                                    st.session_state["pending_qa"] = temp_pending
 
                     if co_rag_enabled and not rag_err:
-                        emit_live("Đang khởi tạo pipeline Co-RAG đa vòng...")
-                        co_manager = CoRAGChainManager(index_dir=last_index_dir, model_engine=model_engine, top_k=int(top_k))
-                        try:
-                            corag_ans = co_manager.ask(
-                                question=original_query,
-                                retrieval_query=rewritten_query,
-                                chat_history=history_for_rewrite,
-                                include_history=include_history,
-                                progress_callback=lambda msg: emit_live(f"Co-RAG: {msg}"),
-                            )
-                        except Exception as e:
-                            corag_err = e
-                            emit_live(f"Co-RAG gặp lỗi: {e}", state="error")
+                        if st.session_state.get("qa_pause_requested", False):
+                            corag_ans = None
+                            corag_err = "Đã pause"
+                            emit_live("Dừng xử lý Co-RAG vì user ấn pause", state="done")
+                        else:
+                            emit_live("Đang khởi tạo pipeline Co-RAG đa vòng...")
+                            co_manager = CoRAGChainManager(index_dir=last_index_dir, model_engine=model_engine, top_k=effective_top_k)
+                            try:
+                                corag_ans = co_manager.ask(
+                                    question=original_query,
+                                    retrieval_query=rewritten_query,
+                                    source_filter=effective_filter,
+                                    chat_history=history_for_rewrite,
+                                    include_history=include_history,
+                                    progress_callback=lambda msg: emit_live(f"Co-RAG: {msg}"),
+                                )
+                            except Exception as e:
+                                corag_err = e
+                                emit_live(f"Co-RAG gặp lỗi: {e}", state="error")
 
                     if co_rag_enabled and corag_status_slot is not None:
                         if corag_err:
@@ -1456,14 +1550,6 @@ def main() -> None:
                     )
                     st.session_state["qa_submit_requested"] = False
                     st.session_state["qa_generation_in_progress"] = False
-
-            if pause_clicked:
-                if _pause_and_store_current_question(qa_query):
-                    st.session_state["qa_requires_pause"] = False
-                    st.success("Đã pause và lưu lịch sử theo trạng thái hiện tại.")
-                    st.rerun()
-                else:
-                    st.warning("Không có câu hỏi để pause. Hãy nhập câu hỏi hoặc tạo một lượt hỏi trước.")
 
             pending_qa = st.session_state.get("pending_qa")
             if pending_qa:
