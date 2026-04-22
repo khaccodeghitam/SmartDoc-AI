@@ -108,39 +108,68 @@ def _request_qa_generation() -> None:
     st.session_state["qa_generation_in_progress"] = True
 
 
+def _is_pending_selection_item(item: dict) -> bool:
+    return bool(item.get("is_pending_selection", False)) and not str(item.get("selected_source", "")).strip()
+
+
+def _prune_stale_pending_entries(chat_history: list[dict]) -> None:
+    """Keep at most one unresolved pending turn (the newest one at index 0)."""
+    if not chat_history:
+        return
+
+    for idx in range(len(chat_history) - 1, 0, -1):
+        if _is_pending_selection_item(chat_history[idx]):
+            chat_history.pop(idx)
+
+
 def _extract_pending_qa_from_history(chat_history: list[dict] | None) -> dict | None:
     if not chat_history:
         return None
 
-    for item in chat_history:
-        if not bool(item.get("is_pending_selection", False)):
-            continue
-        if str(item.get("selected_source", "")).strip():
-            continue
+    # Unresolved pending turn is expected to be the newest history entry.
+    item = chat_history[0]
+    if not _is_pending_selection_item(item):
+        return None
 
-        return {
-            "turn_id": str(item.get("turn_id", "")).strip(),
-            "question": str(item.get("question", "")).strip(),
-            "rewritten_query": str(item.get("rewritten_query", "")).strip(),
-            "include_history": bool(item.get("include_history", False)),
-            "used_rewrite": bool(item.get("used_rewrite", False)),
-            "corag_state": str(item.get("corag_state", "pending")),
-            "rag": {
-                "answer": str(item.get("rag_answer", "")),
-                "confidence": item.get("rag_confidence"),
-                "contexts": list(item.get("rag_contexts", [])),
-                "error": str(item.get("rag_error", "")),
-            },
-            "corag": {
-                "answer": str(item.get("corag_answer", "")),
-                "confidence": item.get("corag_confidence"),
-                "total_rounds": int(item.get("corag_total_rounds", 0) or 0),
-                "iterations": list(item.get("corag_iterations", [])),
-                "error": str(item.get("corag_error", "")),
-            },
-        }
+    turn_id = str(item.get("turn_id", "")).strip()
+    question = str(item.get("question", "")).strip()
+    if not question:
+        return None
 
-    return None
+    corag_state = str(item.get("corag_state", "pending"))
+    corag_answer = str(item.get("corag_answer", "")).strip()
+    corag_error = str(item.get("corag_error", "")).strip()
+
+    # If app was closed/reloaded while Co-RAG was running, there is no job to complete.
+    # Surface an interrupted state so user can still save RAG and continue asking.
+    if corag_state == "pending" and not corag_answer and not corag_error:
+        job = _CORAG_JOBS.get(turn_id)
+        future = job.get("future") if isinstance(job, dict) else None
+        if not isinstance(future, Future) or future.done():
+            corag_state = "done"
+            corag_error = "Co-RAG đã bị gián đoạn (đóng app/reload). Bạn có thể lưu RAG hoặc hỏi lại."
+
+    return {
+        "turn_id": turn_id,
+        "question": question,
+        "rewritten_query": str(item.get("rewritten_query", "")).strip(),
+        "include_history": bool(item.get("include_history", False)),
+        "used_rewrite": bool(item.get("used_rewrite", False)),
+        "corag_state": corag_state,
+        "rag": {
+            "answer": str(item.get("rag_answer", "")),
+            "confidence": item.get("rag_confidence"),
+            "contexts": list(item.get("rag_contexts", [])),
+            "error": str(item.get("rag_error", "")),
+        },
+        "corag": {
+            "answer": str(item.get("corag_answer", "")),
+            "confidence": item.get("corag_confidence"),
+            "total_rounds": int(item.get("corag_total_rounds", 0) or 0),
+            "iterations": list(item.get("corag_iterations", [])),
+            "error": corag_error,
+        },
+    }
 
 
 def _refresh_pending_qa_from_current_history() -> None:
@@ -281,6 +310,7 @@ def _get_or_create_active_session(title_seed: str) -> tuple[list[dict], dict]:
 
 def _sync_current_session_history(sessions: list[dict], current_session: dict) -> None:
     history_arr = current_session.setdefault("history", [])
+    _prune_stale_pending_entries(history_arr)
     st.session_state["chat_history"] = history_arr[:50]
     save_persistent_history(sessions)
     _refresh_pending_qa_from_current_history()
@@ -331,7 +361,7 @@ def _append_pending_dual_chat(
     return _extract_pending_qa_from_history(st.session_state.get("chat_history", []))
 
 
-def _update_pending_turn_with_corag(turn_id: str, corag_data: dict) -> dict | None:
+def _update_pending_turn_with_corag(turn_id: str, corag_data: dict, corag_state: str = "done") -> dict | None:
     if not turn_id.strip():
         return None
 
@@ -359,7 +389,7 @@ def _update_pending_turn_with_corag(turn_id: str, corag_data: dict) -> dict | No
         item["corag_total_rounds"] = corag_data.get("total_rounds", 0)
         item["corag_iterations"] = list(corag_data.get("iterations", []))
         item["corag_error"] = str(corag_data.get("error", ""))
-        item["corag_state"] = "done"
+        item["corag_state"] = corag_state
         _sync_current_session_history(sessions, current_session)
         return _extract_pending_qa_from_history(st.session_state.get("chat_history", []))
 
@@ -1501,7 +1531,6 @@ def main() -> None:
                         "rewritten_query": rewritten_query,
                         "include_history": include_history,
                         "used_rewrite": used_rewrite,
-                        "corag_state": "done" if (corag_ans or corag_err) else "idle",
                         "rag": {
                             "answer": rag_ans.answer if rag_ans else "",
                             "confidence": rag_ans.confidence_score if rag_ans else None,
@@ -1521,19 +1550,39 @@ def main() -> None:
                                 }
                                 for iteration in (corag_ans.iterations if corag_ans else [])
                             ],
-                            "error": str(corag_err) if corag_err else "",
+                            "error": (
+                                str(corag_err)
+                                if corag_err
+                                else (
+                                    "Co-RAG không trả về kết quả hoàn chỉnh. Bạn có thể lưu RAG hoặc hỏi lại."
+                                    if not corag_ans
+                                    else ""
+                                )
+                            ),
                         },
                     }
 
-                    persisted_pending = _append_pending_dual_chat(
-                        question=original_query,
-                        rewritten_query=rewritten_query,
-                        include_history=include_history,
-                        used_rewrite=used_rewrite,
-                        rag_data=pending_payload["rag"],
-                        corag_data=pending_payload["corag"],
-                        corag_state="done" if (corag_ans or corag_err) else "idle",
-                    )
+                    persisted_pending = None
+                    current_pending = st.session_state.get("pending_qa") or {}
+                    current_turn_id = str(current_pending.get("turn_id", "")).strip()
+                    if current_turn_id:
+                        persisted_pending = _update_pending_turn_with_corag(
+                            turn_id=current_turn_id,
+                            corag_data=pending_payload["corag"],
+                            corag_state="done",
+                        )
+
+                    if not persisted_pending:
+                        persisted_pending = _append_pending_dual_chat(
+                            question=original_query,
+                            rewritten_query=rewritten_query,
+                            include_history=include_history,
+                            used_rewrite=used_rewrite,
+                            rag_data=pending_payload["rag"],
+                            corag_data=pending_payload["corag"],
+                            corag_state="done",
+                        )
+
                     if persisted_pending:
                         st.session_state["pending_qa"] = persisted_pending
                     else:
