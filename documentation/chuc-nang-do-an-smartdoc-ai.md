@@ -6,43 +6,52 @@
 - Cho phép người dùng tải file PDF (kéo-thả hoặc chọn file).
 - Kiểm tra định dạng và thông báo lỗi nếu file không hợp lệ.
 - Thực hiện trích xuất văn bản từ PDF.
+OK
 
 2. Tách văn bản thành các đoạn (chunking)
 - Chia tài liệu thành các chunk bằng RecursiveCharacterTextSplitter.
 - Có cơ chế overlap để giữ ngữ cảnh giữa các đoạn.
+OK
 
 3. Tạo vector embedding đa ngôn ngữ
 - Chuyển text chunks thành vector bằng mô hình multilingual MPNet.
 - Hỗ trợ tốt tiếng Việt và nhiều ngôn ngữ khác.
+OK
 
 4. Lưu trữ và truy xuất bằng vector database
 - Lưu embeddings vào FAISS index.
 - Thực hiện similarity search để lấy top-k đoạn liên quan.
 
+
 5. Hỏi đáp trên tài liệu (Document Q&A)
 - Người dùng nhập câu hỏi ngôn ngữ tự nhiên.
 - Hệ thống truy xuất context liên quan và sinh câu trả lời bằng LLM.
+OK
 
 6. Tích hợp LLM local qua Ollama
 - Sử dụng model Qwen2.5:7b để suy luận.
 - Chạy local, không phụ thuộc API cloud.
+OK
 
 7. Prompt engineering + ràng buộc câu trả lời
 - Prompt có instruction rõ ràng, yêu cầu trả lời ngắn gọn.
 - Có nhánh xử lý theo ngôn ngữ câu hỏi (Việt/Anh).
+OK
 
 8. Tự động phát hiện ngôn ngữ và phản hồi phù hợp
 - Hệ thống nhận diện ngôn ngữ đầu vào ở mức cơ bản.
 - Trả lời theo ngôn ngữ phù hợp với người dùng.
+OK
 
 9. Giao diện web thân thiện (Streamlit)
 - Có khu vực upload file, nhập câu hỏi, hiển thị câu trả lời.
 - Hiển thị trạng thái xử lý và loading spinner.
+No chưa thân thiện ng dùng
 
 10. Error handling và thông báo người dùng
 - Cảnh báo lỗi file upload, lỗi xử lý, lỗi kết nối model.
 - Trả thông báo dễ hiểu cho người dùng cuối.
-
+OK
 ---
 
 ## 2. Chức năng phát triển thêm (theo yêu cầu mục 8)
@@ -50,15 +59,18 @@
 1. Hỗ trợ DOCX
 - Upload và xử lý file DOCX tương tự PDF.
 - Trích xuất văn bản chính xác từ DOCX.
+OK
 
 2. Lưu lịch sử hội thoại
 - Lưu câu hỏi/câu trả lời theo phiên.
 - Hiển thị lịch sử chat ở sidebar.
+OK
 
 3. Xóa lịch sử và dữ liệu tạm
 - Nút Clear History để xóa toàn bộ hội thoại.
 - Nút Clear Vector Store để xóa tài liệu/index đã upload.
 - Có xác nhận trước khi xóa.
+OK
 
 4. Cải thiện chiến lược chunk
 - Thử nhiều giá trị chunk_size/chunk_overlap.
@@ -69,6 +81,7 @@
 - Hiển thị nguồn thông tin dùng để trả lời (trang, vị trí đoạn).
 - Cho click để xem ngữ cảnh gốc.
 - Highlight đoạn trích đã dùng.
+OK
 
 6. Conversational RAG
 - Bổ sung memory hội thoại.

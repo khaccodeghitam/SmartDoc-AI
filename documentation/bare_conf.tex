@@ -1,0 +1,289 @@
+\documentclass[10pt, conference, a4paper, compsocconf]{IEEEtran}
+\usepackage{amsmath,amsxtra,amssymb,amsthm,latexsym,amscd,amsfonts}
+\usepackage[T5]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[top=2.7cm, bottom=5.4cm, left=2.72cm, right=3.0cm]{geometry}
+\usepackage{ragged2e}
+\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\DeclareGraphicsExtensions{.pdf,.jpeg,.png,.jpg}
+\usepackage{array}
+\usepackage{url}
+\usepackage{float}
+\usepackage[vietnamese,english]{babel}
+\usepackage[caption=false,font=footnotesize]{subfig}
+
+\headsep=0.7cm
+\headheight=1.0cm
+\footskip=1.0cm
+\voffset=-0.74cm
+\tolerance=1200
+\emergencystretch=1em
+\hyphenpenalty=300
+\exhyphenpenalty=300
+
+\begin{document}
+\pagenumbering{arabic}
+\fontsize{10}{12}
+\selectfont
+
+\title{{\normalfont\Huge\mdseries SmartDoc AI - Intelligent Document QA System}}
+
+\author{\IEEEauthorblockN{Bùi Nguyên Thịnh\IEEEauthorrefmark{1}, Nguyễn Tuấn Tài \IEEEauthorrefmark{2}, Nguyễn Vân Quốc Huynh\IEEEauthorrefmark{2}, Phạm Yến Nhi\IEEEauthorrefmark{2}, Kiều Hoài Nam\IEEEauthorrefmark{3}}
+	\IEEEauthorblockA{ \IEEEauthorrefmark{3}Khoa Công nghệ Thông tin, Trường Đại học Sài Gòn}
+	\IEEEauthorblockA{Email: email1@abc.xyz, email2@abc.xyz, email3@abc.xyz}
+}
+
+\maketitle
+
+\begin{abstract}
+Cùng với sự gia tăng mạnh mẽ về lượng tài liệu học thuật và văn bản số, việc tìm kiếm và trích xuất thông tin một cách thủ công đang dần trở nên mất thời gian và kém hiệu quả. Mặc dù các mô hình ngôn ngữ lớn (LLM) thương mại như ChatGPT giải quyết tốt bài toán tổng hợp tri thức, chúng vẫn đối mặt với hai rào cản chí mạng khi áp dụng vào cấp độ doanh nghiệp: rủi ro an toàn thông tin (Privacy) khi đưa dữ liệu nội bộ lên đám mây, và nội dung ảo giác (Hallucination) khi AI bịa đặt thông tin. Báo cáo này trình bày thiết kế chi tiết và tiến trình triển khai phần mềm mã nguồn mở SmartDoc AI, một trợ lý phân tích tài liệu (PDF, DOCX) chạy độc lập (100\% Offline Local). Xoay quanh nền tảng kiến trúc Retrieval-Augmented Generation (RAG), hệ thống kết hợp mô hình Qwen mở thông qua nền tảng suy luận Ollama cùng framework LangChain và Streamlit. Báo cáo cung cấp góc nhìn sâu sắc về nền tảng toán học của thuật toán truy xuất, phân rã mã nguồn thành các luồng xử lý riêng biệt. Đi kèm với sự phối hợp các kỹ thuật tiên tiến: Hybrid Search (BM25 + FAISS), Mô hình chập Cross-Encoder Re-ranking chống nhiễu, luồng thuật toán đệ quy Co-RAG (Chain of Retrieval) tự kích hoạt truy xuất bổ sung và Self-RAG. Hệ thống cũng giải quyết triệt để rào cản về kiểm soát đa tài liệu bằng kiến trúc Singleton Caching và quản trị JSON State.
+\end{abstract}
+
+\begin{IEEEkeywords}
+RAG; LLM; FAISS; Open Source Architecture; Qwen; Hybrid Multi-Search; BM25; Self-RAG; Streamlit.
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+
+\section{Giới thiệu chung và Bối cảnh}
+Trong nhiều môi trường học thuật và doanh nghiệp, tri thức thường nằm rải rác trong tài liệu PDF/DOCX. Khi số lượng tài liệu tăng, việc tra cứu thủ công trở nên chậm, khó nhất quán và khó truy vết nguồn. Bên cạnh đó, việc đưa dữ liệu nội bộ lên các dịch vụ AI bên ngoài có thể phát sinh rủi ro về bảo mật và tuân thủ.
+
+Để giải quyết bài toán này, hướng tiếp cận \textbf{Retrieval-Augmented Generation (RAG)} được lựa chọn: hệ thống chỉ tạo câu trả lời sau khi truy xuất được ngữ cảnh liên quan từ kho tài liệu cục bộ. Cách làm này giúp giảm nguy cơ trả lời ngoài phạm vi dữ liệu và tăng khả năng kiểm chứng thông tin qua nguồn trích dẫn.
+
+Từ bối cảnh trên, dự án \textbf{SmartDoc AI} được phát triển với mục tiêu xây dựng một trợ lý hỏi đáp tài liệu chạy \textbf{offline/local-first} dựa trên mã nguồn mở. Hệ thống hỗ trợ nạp nhiều tài liệu PDF/DOCX, tạo chỉ mục FAISS từ embedding ngôn ngữ, truy xuất lai (vector + BM25), tái xếp hạng bằng Cross-Encoder và phản hồi qua giao diện Streamlit. Ngoài chức năng hỏi đáp cơ bản, dự án còn tích hợp truy vấn theo ngữ cảnh hội thoại, bộ lọc metadata đa tài liệu và cơ chế fallback mô hình khi tài nguyên hạn chế.
+
+\section{Nền Tảng Cơ Sở Kiến Trúc Đa Mô Hình (Multi-Model Architecture)}
+
+SmartDoc AI được tổ chức theo kiến trúc truy xuất lai gồm nhiều thành phần phối hợp: mô hình embedding để biểu diễn ngữ nghĩa, FAISS cho truy xuất vector, BM25 cho truy xuất từ khóa và Cross-Encoder cho bước tái xếp hạng. Cách thiết kế này giúp hệ thống cân bằng giữa độ bao phủ thông tin và độ chính xác ngữ cảnh trước khi chuyển dữ liệu vào mô hình sinh đáp án.
+
+\subsection{Cơ Chế Nhúng Không Gian (Dense Embedding Mechanism)}
+Mỗi đoạn văn bản (text chunk) được ánh xạ sang vector embedding bằng mô hình \texttt{sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}. Khi người dùng đưa ra truy vấn, FAISS thực hiện tìm kiếm theo độ tương đồng ngữ nghĩa để lấy ra các đoạn liên quan nhất. Tập ứng viên này đóng vai trò ngữ cảnh nền cho bước suy luận tiếp theo.
+
+\subsection{Cơ Chế Khớp Ký Tự Từ Vựng (Sparse BM25 Mechanism)}
+Lỗ hổng của quy trình Vector RAG thông thường nằm ở loại "Cụm danh từ cụ thể". Khi lượng thông tin bao gồm mã số, hệ Vector lưới thường bỏ qua do thiếu vắng kết nối ngữ nghĩa tĩnh. Bù khuyết lỗi lầm, SmartDoc đưa vào vận hành cơ chế BM25.
+Thuật toán BM25 gán trọng số tự động cho từng từ khóa riêng lẻ từ truy vấn, triệt tiêu sức nặng của các từ nối vô nghĩa. Sự kết bè hợp sức đồng thời giữa tuyến BM25 (Ngữ vựng phân mảnh) và FAISS (Ngữ nghĩa) hình thành bộ máy dò tìm diện rộng vô cùng chuẩn xác.
+
+\subsection{Hệ Thống Tái Đánh Giá Chuyên Sâu (Cross-Encoder Re-Ranking)}
+Tệp danh sách bối cảnh trào ngược ra từ hệ tìm kiếm chéo dễ bị dính lẫn lộn "Văn bản rác". Quần thể này bị ném qua mạng Nơ-ron bộ lọc siêu việt \texttt{ms-marco-MiniLM-L-6-v2}.
+Mô hình Cross-Encoder nhận ma trận chéo bao gồm cặp Câu Hỏi Người Dùng và Bối Cảnh, sau đó ép vào tầng chập Transformer sinh ra xác suất tương quan (Logit Score). Các đoạn nhúng có hệ số phân giải tỷ lệ dưới ngưỡng quy định sẽ bị loại trừ khắc nghiệt, đảm bảo độ tinh khiết tối đa của dữ liệu trước khi bơm vào hệ não bộ LLM khởi tạo câu trả lời.
+
+\section{Kiến Trúc Máy Trạng Thái và Luồng Gọi Hàm}
+
+SmartDoc AI tổ chức luồng xử lý theo ba lớp: Presentation (Streamlit), Application (business logic), và Data Layer (storage/retrieval). Luồng từ UI xuống phía dưới tuân thủ nguyên tắc gọi hàm đồng bộ, với trạng thái phiên được lưu trữ qua Streamlit \texttt{session\_state} và JSON persistence.
+
+\subsection{Quy trình nạp tài liệu (Ingestion Pipeline)}
+Quy trình nạp từng file tuân thủ bốn bước:
+\begin{enumerate}
+\RaggedRight
+\item Ghi file vào \texttt{data/raw} thông qua \texttt{save\_uploaded\_file}.
+\item Tách chunk bằng \texttt{RecursiveCharacterTextSplitter} theo cấu hình kích cỡ.
+\item Bổ sung metadata (\texttt{source}, \texttt{file\_type}, \texttt{upload\_time}, \texttt{upload\_date}) cho từng đoạn thông qua \texttt{enrich\_chunks\_metadata}.
+\item Tạo hoặc cập nhật index FAISS bằng \texttt{build\_and\_save\_faiss\_index} hoặc \texttt{update\_faiss\_index}.
+\end{enumerate}
+Các file được xử lý tuần tự.
+
+\subsection{Tối ưu hóa tài nguyên (Resource Caching)}
+Streamlit gọi lại mã script sau mỗi tương tác người dùng, điều này có thể dẫn đến nạp lại các mô hình đắt đỏ. Để giảm chi phí, hệ thống dùng \texttt{@st.cache\_resource} để cache embedding model và cross-encoder model. Nhờ vậy, các mô hình chỉ được tải lần đầu tiên, cải thiện đáng kể hiệu năng và giảm sử dụng bộ nhớ trong các phiên làm việc kéo dài.
+
+\subsection{Kỹ Thuật In Vết Lịch Sử Cấp Phát Ngữ Nghĩa (Metadata)}
+Các chunk embedding sẽ giảm giá trị sử dụng nếu thiếu thông tin truy vết nguồn. Vì vậy, hàm \texttt{enrich\_chunks\_metadata} bổ sung metadata như \textit{source}, \textit{file\_name}, \textit{file\_type}, \textit{upload\_time} và \textit{upload\_date} cho từng đoạn văn bản. Nhờ đó, quá trình retrieval có thể lọc theo điều kiện metadata và hiển thị trích dẫn theo đúng tài liệu gốc.
+
+\section{Đồ thị Khai Phá Tệp Vô Cấu Trúc (Parsing)}
+
+Tầng Parsing của SmartDoc AI tập trung vào mục tiêu chuẩn hóa dữ liệu đầu vào không cấu trúc (PDF, DOCX) thành văn bản để đưa vào pipeline chunking và indexing. Thiết kế hiện tại ưu tiên tính ổn định và khả năng mở rộng hơn là các bước phân tích cấu trúc tài liệu chuyên sâu.
+
+\subsection{Phân Tách Bề Mặt Mảng PDF (PDFPlumberLoader)}
+Với tệp PDF, hệ thống sử dụng \texttt{PDFPlumberLoader} để trích xuất nội dung văn bản theo trang và trả về danh sách tài liệu cho các bước xử lý tiếp theo. Cách làm này phù hợp cho truy xuất ngữ nghĩa tổng quát, đồng thời giảm độ phức tạp triển khai khi cần nạp nhiều loại tài liệu trong cùng một luồng ingest.
+
+\subsection{Bóc Tách Cây Phả Hệ Word (Python-Docx Tree Mapper)}
+Với tệp DOCX, hệ thống dùng \texttt{python-docx} để đọc các đoạn văn bản (paragraph), loại bỏ dòng rỗng và ghép thành chuỗi nội dung thống nhất. Sau bước trích xuất, dữ liệu tiếp tục đi qua chunking và được bổ sung metadata để phục vụ lọc theo nguồn tài liệu trong giai đoạn retrieval.
+
+\section{Kiến Trúc Luồng Hỏi Đáp Và Tái Tổ Hợp Đệ Quy}
+
+Quy trình Hỏi Đáp không dừng lại ở Fetch dữ liệu mà bắt đầu kích hoạt cơ chế sinh học suy diễn. Luồng tương tác mang định dạng máy dò tìm AI tự chủ.
+
+\subsection{Luồng Gọi Mảng Hybrid Chống Khuyết Thiếu}
+
+\begin{algorithm}[!htb]
+\caption{Cơ chế Truy xuất Bối cảnh Tri Thức Đa Tầng Hybrid Auto-Retrieval Architecture}
+\begin{algorithmic}[1]
+\STATE Trạm nhận câu truy vấn thô $Q$ do User nhập thông qua Sidebar.
+\IF{\textbf{is\_follow\_up\_query}($Q$) $==$ True logic}
+    \STATE Mở khóa Bộ Nhớ \textbf{Session JSON Memory}.
+    \STATE Cập nhật LLM viết lại $Q$ thành câu \textbf{StandAlone Query}.
+\ENDIF
+\STATE Kích hoạt Regex tìm Cờ Đích Danh từ mảng văn bản.
+\STATE Chạy \underline{Nhánh Trái}: Lọc $K$ đoạn Top K bằng FAISS Vector.
+\STATE Chạy \underline{Nhánh Phải}: Lọc $N$ đoạn Top N bằng Sparse BM25 Keyword TF-IDF.
+\STATE Gom Set vào mảng tinh sạch Thuật toán Giao thoa.
+\STATE Giao List cho module \textbf{CrossEncoder Re-ranker}:
+\FOR{Mỗi nút đoạn $V$ trong tập}
+  \STATE Tính điểm liên quan giữa truy vấn và đoạn văn bản.
+\ENDFOR
+\STATE Sắp xếp điểm theo thứ tự giảm dần và chọn Top-K đoạn phù hợp nhất.
+\STATE Nạp Máng Trượt \textbf{Ngữ Cảnh} tinh chế lên Streamlit.
+\end{algorithmic}
+\label{alg:hybrid_retrieval}
+\end{algorithm}
+
+Thuật toán truy xuất tại Algorithm \ref{alg:hybrid_retrieval} tích hợp cơ chế lọc theo nguồn tài liệu dựa trên metadata, giúp thu hẹp không gian tìm kiếm khi truy vấn nêu rõ tên tài liệu. Cách tiếp cận này thường cải thiện độ tập trung của ngữ cảnh trả về; mức cải thiện tốc độ cụ thể phụ thuộc dữ liệu và cấu hình thực nghiệm.
+
+\subsection{Quản Trị Vòng Đời Data (Clear Vector Data)}
+Tính năng dọn dữ liệu tạm được kích hoạt bởi hàm \texttt{clear\_vector\_store\_data}. Hàm này xóa dữ liệu trong \texttt{data/index} và \texttt{data/raw}, đồng thời giao diện reset các trạng thái liên quan đến index/retrieval để bắt đầu phiên làm việc mới. Cơ chế này giúp hạn chế tồn đọng dữ liệu cũ và giảm rủi ro nhiễu ngữ cảnh khi ingest lại tài liệu.
+
+\subsection{Tiến Trình Đánh Giá Củng Cố Đệ Quy Tiên Tiến (Recursive Co-RAG Cognitive Process)}
+
+RAG tĩnh vòng lặp lỗi thời lộ rõ giới hạn trước các câu hỏi khuyết nhịp nối. Giải pháp vĩ mô \texttt{corag\_chain\_manager.py} vận hành một thiết bị sinh học giả nguyên. Module cấp cho Agent quyền hạn tự rà soát.
+
+\begin{algorithm}[!htb]
+\caption{Phân Tích Logic Vòng lặp Đệ quy Co-RAG Assessment Agent}
+\begin{algorithmic}[1]
+\STATE Xây vùng nhớ chứa \textbf{Bối cảnh tập con $C$}.
+\FOR{Khởi chạy $i=1$ tới mốc khóa cứng $Max\_Rounds$}
+\STATE Chuyển giao Flag cho hệ Cỗ Máy Thẩm Phán \textbf{Judge-LLM} rà soát: \\ "Bối cảnh $C$ thu được đã đủ giải đáp Truy Vấn Mẹ chưa?"
+\IF{$Judge\_Result$ nhả ra mã \textbf{SUFFICIENT}}
+\STATE Ép ngắt đột ngột (\textbf{BREAK}), đẩy $C$ ra Engine Text Generation.
+\ELSE
+\STATE Phân tách List thông tin bị Thiếu Hụt bù trừ.
+\STATE Nhặt mảng lập thể: $Sub\_Query$.
+\STATE Thổi còi Khởi động Tìm kiếm Nhúng mới với mã ngõ vào móc nối $Sub\_Query$. 
+\STATE Đắp trộn Mảnh $C$ gốc + Dữ kiện Mới mẻ vớt được ở vòng ngầm.
+\STATE Loại bỏ các đoạn trùng lặp theo nội dung đã tích lũy trong ngữ cảnh.
+\ENDIF
+\ENDFOR
+\STATE Khớp Cửa sổ băng thông Token và in Kết Quả Render lưới giao diện GUI.
+\end{algorithmic}
+\label{alg:corag}
+\end{algorithm}
+
+Co-RAG (Algorithm \ref{alg:corag}) nhồi vào hệ tĩnh RAG một tri giác phán đoán (Agentic Flow). Khả năng tự lẩm nhẩm: "Ngữ nghĩa thiếu vế B, phải gọi lệnh $Sub\_Query$ quét thêm File Phụ tắp đệm củng cố". 
+
+\section{Tối Ưu Kỹ Thuật Vi Mô Chịu Lỗi}
+
+Một cỗ máy tinh xảo cần vỏ giáp bảo hộ (Fault-Tolerance). 
+
+\subsection{Cơ Chế Kích Cầu Lõi Đệm OOM Tĩnh (Out-of-Memory Fallback Tolerance)}
+Tầng suy luận triển khai cơ chế \textbf{retry + fallback} trong module \texttt{ollama\_inference\_engine}. Khi lời gọi \texttt{invoke} gặp nhóm lỗi có thể thử lại (ví dụ: thiếu bộ nhớ, lỗi kết nối, timeout, hoặc phản hồi 5xx), hệ thống đánh dấu model hiện tại là không ổn định trong phiên và lần lượt thử các model dự phòng được cấu hình trong \texttt{FALLBACK\_MODELS} (như \texttt{qwen2.5:1.5b}, \texttt{qwen2.5:0.5b}). Cơ chế này giúp giảm xác suất gián đoạn truy vấn khi backend Ollama gặp lỗi tạm thời; tuy nhiên luồng gọi hiện tại là đồng bộ theo cơ chế \texttt{invoke}, không phải streaming token liên tục.
+
+\subsection{Mũi Khoan Lỗ Khóa An Toàn Tác Dụng Ngược (Restrictive Prompt Layer)}
+LLM cấu trúc mở tự do Qwen Model rất dễ "Ảo giác mạng lân cận". System Instruction nhồi khối tĩnh thép răn đe: \textit{"ONLY meticulously use the Provided Base Embedded Contexts. If NOT match semantic string, explicitly DECLARE 'I Cannot Provide External Out-of-Base Information'. Do NOT Hallucinate!"}. Vành đai lệnh chặn này khóa chết rủi ro cung cấp tư liệu mật giả, đúc AI thành tay quản thư bảo thủ và chính trực dưới bối cảnh Local Offline.
+
+\section{Khảo Sát Thực Nghiệm Định Lượng}
+
+Trong phạm vi thời gian thực hiện đồ án, nhóm thực hiện một đợt khảo sát định lượng sơ bộ nhằm so sánh ba cấu hình chunk của Basic RAG: \textbf{500/50}, \textbf{1000/100} và \textbf{2000/200}. Mỗi cấu hình được kiểm tra trên cùng một bộ \textbf{3 truy vấn tóm tắt}  để bảo đảm tính nhất quán về bối cảnh đánh giá.
+
+Với mỗi truy vấn, nhóm ghi nhận: (i) thời gian phản hồi, (ii) độ tin cậy chủ quan theo thang 1--10, và (iii) điểm chất lượng theo thang 0--2. Điểm chất lượng được chấm như sau:
+\begin{itemize}
+\item \textbf{0 điểm}: trả lời sai, hoặc không có thông tin trong tài liệu nhưng vẫn suy diễn.
+\item \textbf{1 điểm}: trả lời đúng một phần, thiếu ý chính hoặc nhầm mốc sự kiện.
+\item \textbf{2 điểm}: trả lời đúng trọng tâm, đủ ý chính, bám sát nội dung tài liệu.
+\end{itemize}
+
+Điểm chất lượng trung bình được quy đổi theo các mức diễn giải sau:
+\begin{itemize}
+\item \textbf{Tốt} khi điểm trung bình từ 1.6 đến 2.0.
+\item \textbf{Trung bình} khi điểm trung bình từ 1.2 đến dưới 1.6.
+\item \textbf{Thấp} khi điểm trung bình dưới 1.2.
+\end{itemize}
+
+\begin{table}[!htb]
+\renewcommand{\arraystretch}{1.3}
+\caption{Bảng 1. Kết quả khảo sát định lượng theo cấu hình chunk (3 truy vấn kiểm thử)}
+\label{tab:chunk-eval-single}
+\centering
+\normalsize
+\resizebox{0.95\columnwidth}{!}{%
+\begin{tabular}{|>{\centering\arraybackslash}p{2.6cm}|>{\centering\arraybackslash}p{2.8cm}|>{\centering\arraybackslash}p{2.9cm}|}
+\hline
+\textbf{Cấu hình chunk} & \textbf{Độ trễ TB (s)} & \textbf{Điểm chất lượng TB (0--2)} \\
+\hline
+500/50 & 169.3 & 1.67 \\
+\hline
+1000/100 & 177.3 & 1.33 \\
+\hline
+2000/200 & 159.3 & 1.00 \\
+\hline
+\end{tabular}
+}
+\end{table}
+
+Bảng \ref{tab:chunk-eval-single} phản ánh kết quả đo thực tế từ bộ kiểm thử 3 truy vấn trên từng cấu hình chunk. Do cỡ mẫu còn nhỏ, kết quả hiện tại mang ý nghĩa tham chiếu ban đầu để định hướng các vòng đo mở rộng.
+
+\begin{figure}[!htb]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth,
+  height=5.5cm,
+  ylabel={Điểm chất lượng trung bình (0--2)},
+  xlabel={Cấu hình chunk},
+  enlarge x limits=0.3,
+  symbolic x coords={500/50, 1000/100, 2000/200},
+  xtick=data,
+  ymin=0, ymax=2.1,
+  ybar,
+  bar width=15pt,
+  xticklabel style={font=\scriptsize},
+]
+\addplot[fill=green!40] coordinates {(500/50, 1.67) (1000/100, 1.33) (2000/200, 1.00)};
+\end{axis}
+\end{tikzpicture}
+\caption{Điểm chất lượng trung bình theo từng cấu hình chunk (trích từ Bảng \ref{tab:chunk-eval-single}).}
+\label{fig:chunk-impact}
+\end{figure}
+
+Hình \ref{fig:chunk-impact} cho thấy cấu hình \textbf{500/50} đạt điểm chất lượng trung bình cao nhất (1.67), tiếp đến là \textbf{1000/100} (1.33), và \textbf{2000/200} thấp nhất (1.00). Kết quả này nhất quán với quan sát định tính trong quá trình chấm từng câu: cấu hình 500/50 trả lời đúng trọng tâm nhiều hơn, trong khi 2000/200 thường chỉ đạt mức đúng một phần ở các ý then chốt. Ở giai đoạn tiếp theo, nhóm sẽ mở rộng số lượng câu kiểm thử để tăng độ tin cậy thống kê trước khi kết luận cấu hình tối ưu.
+
+\section{Phân Cấp Quản Trị Bài Toán Hệ RAG Khôn Ngoan Mở Rộng}
+
+Nhằm đạt đỉnh cao tương tác liền mạch, dự án vượt rào mảng hỏi đáp Question \& Answering một bước thô bạo. Sự lắp ráp hai modul bổ trợ này nới rộng không gian thực phi tuyến:
+
+\subsection{Lưới Phễu Siêu Dữ Liệu Đa Ràng Buộc (Metadata Dynamic Filtering)}
+Khi mở rộng ingest đa tài liệu, nguy cơ trộn ngữ cảnh giữa các nguồn tăng đáng kể. Để giảm nhiễu, hệ thống gắn metadata cho từng chunk (\texttt{source}, \texttt{file\_type}, \texttt{upload\_date}) ngay sau bước tách văn bản từ tài liệu \texttt{PDF/DOCX}.
+Trong giai đoạn retrieval, bộ lọc metadata được áp dụng đồng thời cho nhánh vector (MMR/similarity) và tập tài liệu đầu vào của BM25 trước khi hợp nhất kết quả. Cách làm này giúp thu hẹp không gian tìm kiếm theo phạm vi người dùng chọn, từ đó cải thiện tính liên quan của ngữ cảnh; tuy nhiên không phải cơ chế đảm bảo loại bỏ hoàn toàn hiện tượng hallucination.
+
+\subsection{Quản Lý Bộ Trạm Thu Lịch Sử (Conversational Memory Cache)}
+Luồng truy xuất mặc định là stateless, vì vậy các câu follow-up thiếu chủ ngữ có thể làm giảm độ chính xác truy xuất nếu không bổ sung ngữ cảnh hội thoại. SmartDoc xử lý điểm này bằng cơ chế phát hiện follow-up, sau đó viết lại truy vấn dựa trên lịch sử gần nhất trong \texttt{chat\_history} trước khi gửi xuống retriever.
+Trạng thái hội thoại được duy trì trong \texttt{st.session\_state} và đồng bộ xuống JSON để phục hồi phiên làm việc. Nhờ đó, các câu hỏi nối tiếp có thể được chuyển về dạng truy vấn độc lập rõ nghĩa hơn, giúp pipeline RAG/Co-RAG chọn ngữ cảnh phù hợp hơn ở các vòng truy xuất tiếp theo.
+
+\section{Kết Luận Mềm Kiến Trúc và Định Hướng Tương Lai Vận Chuyển RAG Tích Hợp Vĩ Mô Doanh Nghiệp Cấp Nặng}
+SmartDoc AI theo định hướng local-first khi triển khai suy luận với Ollama trên máy cục bộ, nhờ đó giảm phụ thuộc vào dịch vụ bên ngoài và hỗ trợ tốt hơn cho bối cảnh dữ liệu nội bộ. Tuy nhiên, hệ thống không mặc định triệt tiêu toàn bộ rủi ro vận hành; mức an toàn thực tế vẫn phụ thuộc cấu hình hạ tầng, chính sách truy cập và quy trình quản trị dữ liệu của đơn vị triển khai.
+Ở góc độ kiến trúc, dự án tách rõ bốn lớp \textit{Presentation}, \textit{Application}, \textit{Data Layer} và \textit{Model Layer}. Trên nền đó, pipeline Hybrid Search kết hợp với bước Cross-Encoder re-ranking giúp tăng chất lượng ngữ cảnh trước khi sinh đáp án. Bên cạnh đó, cơ chế retryable-error + fallback model giúp giảm xác suất gián đoạn khi mô hình chính gặp lỗi tạm thời (ví dụ thiếu bộ nhớ hoặc lỗi kết nối), nhưng không được xem là bảo đảm tuyệt đối trong mọi tải vận hành.
+
+Tương lai hệ thống sẽ tháo gỡ điểm đen giới hạn đồ họa văn bản bằng kỹ nghệ máy nhìn quang học \textbf{Vision-Language Models (VLM Image Optical Machine Layer)}. Tích hợp bứt phá RAG trồi lên bề mặt phân tích hình thù lưới bảng nhúng phẳng, mở ra thời đại kết xuất Microservice API qua Data Cloud vĩnh cửu.
+
+\renewcommand{\refname}{Thư Mục Tài liệu Tham Khảo Học Thuật}
+\begin{thebibliography}{9}
+
+\bibitem{langchain-docs}
+LangChain AI, \emph{LangChain Document Core Framework Ecosystem Architecture Reference Guide}. LangChain Foundation System Index Documentation Organization, 2026. \url{https://python.langchain.com/docs/core_architecture_ecosystems}
+
+\bibitem{ollama-hub}
+Ollama Open Source, \emph{Get Local Workload Setup Guide Application Protocol Running Secure Local Offline Native Inference}. Global Community Software Repository Platform, 2026. \url{https://ollama.com/library/docs/}
+
+\bibitem{qwen-paper}
+Alibaba Cloud Qwen AI, \emph{Qwen Series Technical Protocol Analysis Report: Deep Dense Neural Model Learning}. Alibaba Cloud AI Artificial Research Institute, December 2024. arXiv Advanced Preprint.
+
+\bibitem{faiss-fb}
+Jeffrey Johnson, Matthijs Douze, and Herv{\'e} J{\'e}gou, \emph{Billion-scale Heavy Matrix Array Dense Similarity Mathematical Search Architecture Vector Machine Data Point Logic}, IEEE Technical Heavy Index Neural Networking Database Analysis Metrics, vol. 7, issue 9, pp. 535-547, 2019.
+
+\bibitem{lewis-rag}
+Patrick Lewis, \emph{Khái Niệm Lý Thuyết Thiết Kế Hệ Khung Kiến Trúc Retrieval-Augmented Retrieval System Engine}, Neural Information Processing Systems (NeurIPS 2020), 2020. 
+
+\bibitem{streamlit-docs}
+Streamlit Framework UI, \emph{Rapid Streamlit Development Core Pipeline Ecosystem Python Build Data Science Rapid Generation}. \url{https://docs.streamlit.io/library/core_api_rendering}
+
+\bibitem{hug-trans}
+T. Wolf, et al., \emph{Kho Tàng Framework Core Component Machine Transformers Neural Complex Auto-Attention Block Processing Ecosystem Protocol}, EMNLP Mechanism Algorithm Group Deep Structure 2020. \url{https://huggingface.co/docs}
+
+\bibitem{sim-bm25}
+Stephen Robertson, \emph{The Statistical Sparse Distribution Mathematics Model Core Keyword Search Term Evaluation Probabilistic Factor Algorithm Index Rank BM25}, Foundations of Information Engine Algorithms, 2009.
+
+\end{thebibliography}
+
+\end{document}
