@@ -213,7 +213,7 @@ Luu y trang thai hien tai: module da co, nhung chua noi full vao luong Q&A trong
 - `src/application/corag_chain_manager.py::CoRAGChainManager`
 - `src/model_layer/ollama_inference_engine.py::self_rag_confidence_score`
 
-## TV5 (4 chuc nang)
+## TV5 - Nhi (4 chuc nang)
 
 ### [Cot loi #9] UI Streamlit
 
