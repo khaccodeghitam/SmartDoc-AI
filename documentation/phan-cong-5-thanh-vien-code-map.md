@@ -152,7 +152,7 @@ Ghi chu: luong TV1 chi tiet duoc cap nhat tai `documentation/tv1-luong-ui-den-cu
 
 - `src/data_layer/faiss_vector_store.py::clear_vector_store_data`
 
-## TV2 (4 chuc nang)
+## TV2 - Huynh  (4 chuc nang)
 
 ### [Cot loi #3] Embedding da ngon ngu
 
