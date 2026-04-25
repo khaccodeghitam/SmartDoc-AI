@@ -175,7 +175,7 @@ class CoRAGChainManager:
         # Vòng 1
         if self._is_cancelled(stop_signal):
             raise RuntimeError("Co-RAG cancelled by user.")
-        self._notify_progress(progress_callback, "Co-RAG vòng 1: đang truy xuất ngữ cảnh ban đầu...")
+        self._notify_progress(progress_callback, "Vòng 1: đang truy xuất ngữ cảnh ban đầu...")
         initial_chunks, raw_docs = self._retrieve_and_format_chunks(
             retrieval_text,
             source_filter=source_filter,
@@ -198,7 +198,7 @@ class CoRAGChainManager:
                 raise RuntimeError("Co-RAG cancelled by user.")
             self._notify_progress(
                 progress_callback,
-                f"Co-RAG vòng {round_num - 1}: đang đánh giá mức độ đủ thông tin...",
+                f"Vòng {round_num - 1}: đang đánh giá mức độ đủ thông tin...",
             )
             assessment = self._assess_sufficiency(
                 question=question_text,
@@ -222,7 +222,7 @@ class CoRAGChainManager:
             anchored_query = f"{question_text}\n{sub_query}".strip()
             self._notify_progress(
                 progress_callback,
-                f"Co-RAG vòng {round_num}: đang mở rộng truy xuất với sub-query mới...",
+                f"Vòng {round_num}: đang mở rộng truy xuất với sub-query mới...",
             )
             new_chunks, new_raw_docs = self._retrieve_and_format_chunks(
                 anchored_query,
@@ -243,7 +243,7 @@ class CoRAGChainManager:
         # Trả lời vòng cuối
         if self._is_cancelled(stop_signal):
             raise RuntimeError("Co-RAG cancelled by user.")
-        self._notify_progress(progress_callback, "Co-RAG: đang tổng hợp và tóm tắt câu trả lời cuối...")
+        self._notify_progress(progress_callback, "Đang tổng hợp và tóm tắt câu trả lời cuối...")
         final_prompt = build_corag_final_prompt(
             question=question_text,
             contexts=accumulated_context,
@@ -253,11 +253,11 @@ class CoRAGChainManager:
         answer = clean_generated_answer(self.model_engine.generate(prompt=final_prompt, question=question_text))
         
         # Self-RAG score
-        self._notify_progress(progress_callback, "Co-RAG: đang chấm độ tự tin kết quả...")
+        self._notify_progress(progress_callback, "Đang chấm độ tự tin kết quả...")
         confidence = self.model_engine.self_rag_confidence_score(
             query=question_text, answer=answer, docs=all_raw_retrieved_docs
         )
-        self._notify_progress(progress_callback, "Co-RAG đã hoàn tất.")
+        self._notify_progress(progress_callback, "Đã hoàn tất.")
 
         return CoRAGAnswer(
             answer=answer,

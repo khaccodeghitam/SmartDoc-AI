@@ -111,7 +111,7 @@ class RAGChainManager:
         confidence = self.model_engine.self_rag_confidence_score(
             query=question_text, answer=answer, docs=retrieved
         )
-        self._notify_progress(progress_callback, "RAG đã hoàn tất.")
+        self._notify_progress(progress_callback, "Đã hoàn tất.")
 
         return RAGAnswer(
             answer=answer,

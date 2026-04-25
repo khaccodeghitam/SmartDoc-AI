@@ -1,33 +1,50 @@
-# TV1 - Luong theo dung thu tu goi ham (UI -> Backend -> UI) - ban theo cau truc moi
+# TV1 - Luong theo dung thu tu goi ham (UI -> Backend -> UI) - ban cap nhat sau refactor
 
 ## 1) Muc tieu tai lieu
 
-Tai lieu nay cap nhat TV1 theo call-chain hien tai cua du an sau refactor:
+Tai lieu nay cap nhat TV1 theo call-chain hien tai cua du an sau khi sua code va sua ham:
 
 - bat dau tu `app.py` va `src/presentation/streamlit_app.py`
-- di xuong `src/application/*` va `src/data_layer/*`
-- quay lai UI de cap nhat `st.session_state`
+- di xuong `src/application/*`, `src/data_layer/*`, `src/model_layer/*`
+- quay lai UI de cap nhat `st.session_state`, `save_app_session(...)` va lich su hoi thoai
 
-Dong thoi doi chieu du 4 chuc nang TV1 va cac ham mat xich bat buoc.
+Tai lieu tap trung vao 2 phan:
+
+- luong ingest -> tao/cap nhat FAISS
+- luong clear/reset va cac helper lien quan den retrieval demo
 
 ---
 
-## 2) Danh sach ham TV1 can co
+## 2) Danh sach ham can doi chieu
 
-### 2.1 Bon chuc nang TV1
+### 2.1 Nhom ham TV1 chinh
 
 1. `save_uploaded_file`
 2. `ingest_document`
-3. `load_docx` (qua `load_documents`)
-4. `clear_vector_store_data`
+3. `ingest_multiple_uploaded_files`
+4. `load_documents` -> `load_pdf` / `load_docx`
+5. `build_and_save_faiss_index`
+6. `update_faiss_index`
+7. `clear_vector_store_data`
 
-### 2.2 Cac ham mat xich bat buoc trong luong ingest
+### 2.2 Nhom ham mat xich bat buoc trong ingest
 
-1. `ingest_multiple_uploaded_files`
-2. `enrich_chunks_metadata`
-3. `build_and_save_faiss_index` (hoac `update_faiss_index` neu index da ton tai)
+1. `enrich_chunks_metadata`
+2. `RecursiveCharacterTextSplitter.split_documents`
+3. `save_app_session`
+4. `load_app_session`
 
-Ket luan doi chieu: da du 4 ham TV1 + cac ham mat xich can co trong code hien tai.
+### 2.3 Nhom ham lien quan den retrieval demo va filter
+
+1. `search_similar_chunks`
+2. `search_vector_only_chunks`
+3. `resolve_effective_source_filter`
+4. `detect_sources_mentioned_in_query`
+5. `metadata_matches_filters`
+6. `source_matches_filter`
+7. `source_name_core`
+
+Ket luan doi chieu: code hien tai khong chi co ingest, ma con co luong retrieval demo va filter source dong bo voi query.
 
 ---
 
@@ -44,8 +61,9 @@ Trong `src/presentation/streamlit_app.py`, UI nhan:
 - `uploaded_files` tu `st.file_uploader(..., accept_multiple_files=True, type=["pdf", "docx"])`
 - `chunk_size` tu `st.number_input("Chunk size", ...)`
 - `chunk_overlap` tu `st.number_input("Chunk overlap", ...)`
+- `top_k` tu `st.number_input("Top-k search", ...)`
 
-Khi user bam `Ingest va tao FAISS index`, call-chain backend bat dau.
+Khi user bam `Ingest va tao FAISS index`, backend bat dau call-chain ingest.
 
 ---
 
@@ -64,11 +82,11 @@ ingest_result = ingest_multiple_uploaded_files(
 Vai tro:
 
 - dieu phoi ingest theo lo nhieu file
-- gom tong chunks de build/cap nhat index
+- gop tong `raw_docs_count` va `chunks`
 
 Gia tri tra ve:
 
-- `IngestResult` gom `raw_docs_count`, `chunks_count`, `chunks`
+- `IngestResult` gom `file_path`, `raw_docs_count`, `chunks_count`, `chunks`
 
 ---
 
@@ -80,11 +98,8 @@ Ham duoc goi:
 
 Vai tro:
 
-- luu file upload tu bo dem Streamlit vao `data/raw`
-
-Gia tri tra ve:
-
-- `file_path` (Path vat ly)
+- luu file upload tu Streamlit vao `data/raw`
+- tra ve `Path` vat ly de dung cho cac buoc sau
 
 Noi nhan gia tri tra ve:
 
@@ -112,7 +127,7 @@ Gia tri tra ve:
 Noi nhan gia tri tra ve:
 
 - `ingest_multiple_uploaded_files` cong don `raw_docs_count`
-- noi list chunks bang `all_chunks.extend(result.chunks)`
+- `all_chunks.extend(result.chunks)` de gom chunk phang theo lo
 
 ---
 
@@ -153,7 +168,7 @@ Ham duoc goi:
 
 - `src/data_layer/pdf_document_storage.py::enrich_chunks_metadata`
 
-Metadata duoc bo sung/chuan hoa:
+Metadata duoc bo sung / chuan hoa:
 
 - `source`
 - `file_name`
@@ -175,11 +190,12 @@ Sau khi loop het file:
 
 Noi nhan:
 
-- `streamlit_app.main()` nhan vao `ingest_result`
+- `streamlit_app.main()` nhan `ingest_result`
 
 Du lieu quan trong chuyen tiep:
 
 - `ingest_result.chunks` duoc dung de tao/cap nhat FAISS
+- `ingest_result.raw_docs_count` va `ingest_result.chunks_count` duoc dung de thong bao cho user
 
 ---
 
@@ -197,19 +213,30 @@ Gia tri tra ve:
 
 - `IndexBuildResult` gom `index_name`, `index_dir`, `chunks_count`
 
+Luu y sau refactor:
+
+- luong hien tai cho phep ingest nhieu lan va cap nhat index tang dan
+- `last_index_dir` duoc dung de quyet dinh update hay build moi
+
 ---
 
-## Buoc 10 - Main cap nhat session_state va rerun UI
+## Buoc 10 - Main cap nhat session_state va luu session
 
 Main cap nhat:
 
 - `last_index_dir`, `last_index_name`, `last_uploaded_file`
 - `available_sources`, `available_file_types`, `available_upload_dates`
 - `last_ingested_paths`, `ingest_notice`
+- `last_chunks`, `last_bi_encoder_chunks`, `last_vector_only_chunks`, `last_query`
 
 Main luu trang thai F5:
 
 - goi `save_app_session(...)`
+
+Main cung cap nhat session hoi thoai dang mo:
+
+- cap nhat `rag_state` trong `chat_sessions`
+- goi `save_persistent_history(...)` khi can dong bo
 
 Cuoi cung:
 
@@ -219,11 +246,11 @@ Ket qua user thay:
 
 - ingest thanh cong
 - filter metadata o sidebar co du lieu
-- tab Retrieval/Q&A co the dung index vua tao
+- tab Retrieval Demo va Q&A co the dung index vua tao
 
 ---
 
-## 4) Luong chinh so 2: Xoa du lieu tam (chuc nang TV1 thu 4)
+## 4) Luong chinh so 2: Xoa du lieu tam va reset state
 
 Day la nhanh rieng cua TV1, khong nam trong luong ingest.
 
@@ -231,8 +258,8 @@ Day la nhanh rieng cua TV1, khong nam trong luong ingest.
 
 Trong sidebar:
 
-- bam `Clear Vector Store + trang thai`
-- bam `Dong y xoa` de xac nhan
+- bam `Clear Vector Store + trạng thái`
+- bam `Đồng ý xóa` de xac nhan
 
 ## Buoc 2 - Main goi clear_vector_store_data
 
@@ -251,15 +278,90 @@ Gia tri tra ve:
 Noi nhan gia tri tra ve:
 
 - `streamlit_app.main()` nhan `clear_result`
-- reset cac state lien quan index/retrieval/filter
+- reset cac state lien quan index / retrieval / filter
 - thong bao ket qua xoa cho user
+
+State bi reset thuc te:
+
+- `last_index_dir`, `last_index_name`, `last_uploaded_file`
+- `retrieval_history`, `last_chunks`, `last_bi_encoder_chunks`, `last_vector_only_chunks`, `last_query`
+- `available_sources`, `available_file_types`, `available_upload_dates`
+- `last_ingested_paths`, `chunk_benchmark_rows`, `ingest_notice`
+- `pending_sidebar_filter_reset`
 
 ---
 
-## 5) Bang tom tat thu tu goi ham TV1
+## 5) Luong phu: Retrieval Demo va nhom helper lien quan den filter
+
+Phan nay khong phai ingest, nhung dang duoc UI goi truc tiep va lien quan den dong bo source/filter sau refactor.
+
+## Buoc 1 - UI nhan filter va top_k
+
+Trong sidebar, UI co the nhan:
+
+- `sidebar_source_filter`
+- `sidebar_file_type_filter`
+- `sidebar_upload_date_filter`
+- `top_k`
+
+Gia tri nay duoc truyen xuong cac ham retrieve.
+
+## Buoc 2 - Main goi cac nhanh retrieve
+
+UI goi:
+
+- `search_similar_chunks(..., use_rerank=True)` cho hybrid search
+- `search_similar_chunks(..., use_rerank=False)` cho bi-encoder style fallback path
+- `search_vector_only_chunks(...)` cho vector-only comparison
+
+## Buoc 3 - Backend tinh filter hieu luc
+
+Trong `src/utils.py`:
+
+- `detect_sources_mentioned_in_query(query, available_sources)` tim source duoc nhac den trong cau hoi
+- `resolve_effective_source_filter(query, source_filter, all_docs)` uu tien source trong query neu co
+- `metadata_matches_filters(...)` kiem tra source / file_type / upload_date
+- `source_matches_filter(...)` so sanh source da normalize
+
+Y nghia thuc te:
+
+- neu query nhac ro ten file, filter UI co the bi thu hep theo file do
+- neu user chon filter khac voi source trong query, helper se xu ly theo quy tac uu tien hien tai
+
+## Buoc 4 - Rerank va noi ket qua ve UI
+
+Trong `src/data_layer/faiss_vector_store.py`:
+
+- `deduplicate_docs(...)` loai chunk trung lap
+- `rerank_docs(...)` xep hang lai chunk theo cross-encoder hoac keyword overlap fallback
+- `_balance_docs_by_source(...)` giu can bang giua cac source
+
+UI nhan ket qua va cap nhat:
+
+- `last_bi_encoder_chunks`
+- `last_vector_only_chunks`
+- `retrieval_history`
+
+---
+
+## 6) Ghi chu ve append va extend trong luong ingest
+
+Trong `ingest_multiple_uploaded_files`:
+
+- `file_paths.append(file_path)`: them tung duong dan file vao list
+- `all_chunks.extend(result.chunks)`: noi cac chunk vao list phang
+
+Ly do dung `extend`:
+
+- giu kieu du lieu `all_chunks` la `list[Document]`
+- tranh long list khi gop ket qua nhieu file
+
+---
+
+## 7) Bang tom tat thu tu goi ham
 
 1. `app.py` -> `streamlit_app.main()`
-2. UI nhan `uploaded_files`, `chunk_size`, `chunk_overlap`
+2. UI nhan `uploaded_files`, `chunk_size`, `chunk_overlap`, `top_k`
 3. `main` -> `ingest_multiple_uploaded_files`
 4. `ingest_multiple_uploaded_files` -> `save_uploaded_file`
 5. `ingest_multiple_uploaded_files` -> `ingest_document`
@@ -269,40 +371,30 @@ Noi nhan gia tri tra ve:
 9. `ingest_document` -> `enrich_chunks_metadata`
 10. `ingest_multiple_uploaded_files` -> tra `ingest_result`
 11. `main` -> `build_and_save_faiss_index` hoac `update_faiss_index`
-12. `main` cap nhat state + `save_app_session` + `st.rerun()`
+12. `main` cap nhat state + `save_app_session` + `save_persistent_history` + `st.rerun()`
 
-Nhanh rieng TV1:
+Nhanh rieng TV1 clear:
 
 13. UI clear -> `clear_vector_store_data` -> reset state -> rerun
 
----
+Nhanh retrieval demo:
 
-## 6) Ghi chu append va extend trong luong ingest
-
-Trong `ingest_multiple_uploaded_files`:
-
-- `file_paths.append(file_path)`: them tung duong dan file vao list
-- `all_chunks.extend(result.chunks)`: noi cac chunk vao list phang
-
-Ly do dung `extend`:
-
-- giu kieu du lieu `all_chunks` la `list[Document]`, khong bi long list
+14. UI retrieve -> `search_similar_chunks` / `search_vector_only_chunks` -> rerank/dedup -> cap nhat state
 
 ---
 
-## 7) Ket luan
+## 8) Ket luan
 
-Tai lieu TV1 da cap nhat theo cau truc moi `src/*`, phan anh dung call-chain hien tai cua code.
+Tai lieu TV1 da duoc cap nhat theo cau truc moi `src/*` va phan anh dung call-chain hien tai sau khi sua code.
 
-Da bao phu day du 4 ham chuc nang TV1:
+Da bao phu cac ham chinh:
 
 - `save_uploaded_file`
 - `ingest_document`
-- `load_docx` (qua `load_documents`)
+- `ingest_multiple_uploaded_files`
+- `load_docx` / `load_documents`
+- `build_and_save_faiss_index`
+- `update_faiss_index`
 - `clear_vector_store_data`
 
-Va day du cac ham mat xich bat buoc cua luong ingest:
-
-- `ingest_multiple_uploaded_files`
-- `enrich_chunks_metadata`
-- `build_and_save_faiss_index`/`update_faiss_index`
+Va da bo sung cac helper lien quan den retrieval/filter de tai lieu khong bi lech so voi code hien tai.
