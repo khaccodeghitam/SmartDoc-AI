@@ -488,10 +488,17 @@ def _save_selected_answer_from_pending(source: str) -> bool:
         if not _finalize_pending_turn(turn_id=turn_id, selected_source=source):
             return False
     else:
+        # Get sources from pending data if available
+        sources_to_save = []
+        if source == "rag":
+            sources_to_save = rag_data.get("sources", [])
+        elif source == "corag":
+            sources_to_save = corag_data.get("sources", [])
+        
         _append_chat(
             question=question,
             answer=answer,
-            sources=[],
+            sources=sources_to_save,
             answer_confidence=answer_confidence,
             answer_source=source,
         )
@@ -543,10 +550,17 @@ def _pause_and_store_current_question(current_input: str) -> bool:
             if not _finalize_pending_turn(turn_id=turn_id, selected_source="pause"):
                 return False
         else:
+            # Get sources based on answer source
+            sources_to_save = []
+            if answer_source == "rag":
+                sources_to_save = (pending.get("rag") or {}).get("sources", [])
+            elif answer_source == "corag":
+                sources_to_save = (pending.get("corag") or {}).get("sources", [])
+            
             _append_chat(
                 question=question,
                 answer=answer,
-                sources=[],
+                sources=sources_to_save,
                 answer_confidence=answer_confidence,
                 answer_source=answer_source,
             )
@@ -600,6 +614,49 @@ def _append_history(kind: str, detail: str) -> None:
     st.session_state["retrieval_history"] = history[:10]
 
 
+def _convert_raw_docs_to_sources(raw_docs: list, query: str = "") -> list[dict]:
+    """Convert langchain Document objects to sources dict format for _render_sources()."""
+    sources = []
+    for idx, doc in enumerate(raw_docs, start=1):
+        metadata = dict(getattr(doc, "metadata", {}) or {})
+        source_path = str(metadata.get("source", ""))
+        file_name = Path(source_path).name if source_path else "unknown"
+        page = metadata.get("page", metadata.get("page_number", "n/a"))
+        file_type = metadata.get("file_type", "")
+        upload_date = metadata.get("upload_date", "n/a")
+        content = (getattr(doc, "page_content", "") or "").strip()
+        
+        sources.append({
+            "id": f"S{idx}",
+            "source": source_path,
+            "file_name": file_name,
+            "page": page,
+            "file_type": file_type,
+            "upload_date": upload_date,
+            "excerpt": content[:500],
+            "context": content,
+        })
+    return sources
+
+
+def _create_simple_sources_from_chunks(chunks: list[str], query: str = "") -> list[dict]:
+    """Create simple sources dict from formatted chunk strings (for Co-RAG iterations)."""
+    sources = []
+    for idx, chunk in enumerate(chunks, start=1):
+        excerpt = chunk[:500] if chunk else ""
+        sources.append({
+            "id": f"S{idx}",
+            "source": "corag-chunk",
+            "file_name": f"Chunk {idx}",
+            "page": "n/a",
+            "file_type": "corag",
+            "upload_date": "n/a",
+            "excerpt": excerpt,
+            "context": chunk,
+        })
+    return sources
+
+
 def _append_chat(
     question: str,
     answer: str,
@@ -621,6 +678,8 @@ def _append_chat(
         "answer_confidence_source": answer_source,
     })
     _sync_current_session_history(sessions, current_session)
+    # Lưu lịch sử xuống file để persistent qua F5
+    save_persistent_history(st.session_state.get("chat_sessions", []))
 
 
 def _highlight_context_snippet(text: str, query: str) -> tuple[str, int]:
@@ -1415,6 +1474,8 @@ def main() -> None:
                             include_history=include_history,
                             progress_callback=lambda msg: emit_live(f"RAG: {msg}"),
                         )
+                        # Convert raw_docs to sources dict format for rendering
+                        rag_sources = _convert_raw_docs_to_sources(rag_ans.raw_docs, query=original_query)
                     except Exception as e:
                         rag_err = e
                         emit_live(f"RAG gặp lỗi: {e}", state="error")
@@ -1495,7 +1556,7 @@ def main() -> None:
                             _append_chat(
                                 question=original_query,
                                 answer=rag_ans.answer,
-                                sources=[],
+                                sources=rag_sources,
                                 answer_confidence=rag_ans.confidence_score,
                                 answer_source="rag",
                             )
@@ -1535,6 +1596,7 @@ def main() -> None:
                             "answer": rag_ans.answer if rag_ans else "",
                             "confidence": rag_ans.confidence_score if rag_ans else None,
                             "contexts": rag_ans.context_chunks if rag_ans else [],
+                            "sources": rag_sources if rag_ans else [],
                             "error": str(rag_err) if rag_err else "",
                         },
                         "corag": {
@@ -1547,6 +1609,7 @@ def main() -> None:
                                     "sub_query": iteration.sub_query,
                                     "retrieved_chunks": iteration.retrieved_chunks,
                                     "retrieved_chunks_count": len(iteration.retrieved_chunks),
+                                    "sources": _create_simple_sources_from_chunks(iteration.retrieved_chunks, query=iteration.sub_query),
                                 }
                                 for iteration in (corag_ans.iterations if corag_ans else [])
                             ],
@@ -1632,8 +1695,13 @@ def main() -> None:
                         st.markdown(f"**Câu trả lời:**\n\n{rag_answer}")
                         if rag_data.get("confidence") is not None:
                             st.caption(f"Độ tự tin: {rag_data.get('confidence')}/10")
-                        with st.expander("Ngữ cảnh đã dùng"):
-                            st.write("\n\n---\n\n".join(rag_data.get("contexts", [])))
+                        # Use _render_sources() for proper citation tracking
+                        rag_sources = rag_data.get("sources", [])
+                        if rag_sources:
+                            _render_sources(sources=rag_sources, query=pending_qa.get("question", ""))
+                        else:
+                            with st.expander("Ngữ cảnh đã dùng"):
+                                st.write("\n\n---\n\n".join(rag_data.get("contexts", [])))
                     else:
                         st.warning("RAG chưa sinh được câu trả lời.")
 
@@ -1660,8 +1728,13 @@ def main() -> None:
                                 st.markdown(f"**Ý kiến LLM:** {iteration.get('llm_assessment') or 'Không có (Vòng đánh giá/Cuối)'}")
                                 st.markdown(f"**Sub-query tạo ra:** `{iteration.get('sub_query', '')}`")
                                 st.markdown(f"**Số lượng đoạn trích:** {int(iteration.get('retrieved_chunks_count', 0))} chunks")
-                                with st.expander("Ngữ cảnh đã dùng ở vòng này"):
-                                    st.write("\n\n---\n\n".join(iteration.get("retrieved_chunks", [])))
+                                # Use _render_sources() for proper citation tracking in Co-RAG iterations
+                                iteration_sources = iteration.get("sources", [])
+                                if iteration_sources:
+                                    _render_sources(sources=iteration_sources, query=iteration.get('sub_query', ''))
+                                else:
+                                    with st.expander("Ngữ cảnh đã dùng ở vòng này"):
+                                        st.write("\n\n---\n\n".join(iteration.get("retrieved_chunks", [])))
                     else:
                         st.warning("Co-RAG chưa sinh được câu trả lời.")
 
