@@ -152,7 +152,7 @@ Ghi chu: luong TV1 chi tiet duoc cap nhat tai `documentation/tv1-luong-ui-den-cu
 
 - `src/data_layer/faiss_vector_store.py::clear_vector_store_data`
 
-## TV2 - Thịnh  (4 chuc nang)
+## TV2 - Huynh  (4 chuc nang)
 
 ### [Cot loi #3] Embedding da ngon ngu
 
@@ -213,7 +213,7 @@ Luu y trang thai hien tai: module da co, nhung chua noi full vao luong Q&A trong
 - `src/application/corag_chain_manager.py::CoRAGChainManager`
 - `src/model_layer/ollama_inference_engine.py::self_rag_confidence_score`
 
-## TV5 (4 chuc nang)
+## TV5 - Nhi (4 chuc nang)
 
 ### [Cot loi #9] UI Streamlit
 
