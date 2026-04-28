@@ -171,7 +171,7 @@ Ghi chu: luong TV1 chi tiet duoc cap nhat tai `documentation/tv1-luong-ui-den-cu
 
 - `src/data_layer/pdf_document_storage.py::enrich_chunks_metadata`
 
-## TV3 (4 chuc nang)
+## TV3 - Thịnh (4 chuc nang)
 
 ### [Cot loi #5] Document Q&A phan retrieval context
 
