@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 from docx import Document as DocxDocument
 from langchain_community.document_loaders import PDFPlumberLoader

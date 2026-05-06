@@ -66,6 +66,8 @@ class RAGChainManager:
         top_k: int = 4,
         retrieval_query: str | None = None,
         source_filter: list[str] | None = None,
+        file_type_filter: list[str] | None = None,
+        upload_date_filter: list[str] | None = None,
         chat_history: list[dict] | None = None,
         include_history: bool = False,
         progress_callback: Callable[[str], None] | None = None,
@@ -85,6 +87,8 @@ class RAGChainManager:
             retrieval_text,
             top_k=top_k,
             source_filter=source_filter,
+            file_type_filter=file_type_filter,
+            upload_date_filter=upload_date_filter,
         )
         contexts = self._format_context_chunks(retrieved)
 

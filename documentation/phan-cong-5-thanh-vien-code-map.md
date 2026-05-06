@@ -133,8 +133,6 @@ Nguyen tac:
 
 ## TV1 - Tuan Tai (4 chuc nang)
 
-Ghi chu: luong TV1 chi tiet duoc cap nhat tai `documentation/tv1-luong-ui-den-cuoi.md`.
-
 ### [Cot loi #1] Upload va xu ly file
 
 - `src/data_layer/pdf_document_storage.py::save_uploaded_file`
@@ -152,7 +150,7 @@ Ghi chu: luong TV1 chi tiet duoc cap nhat tai `documentation/tv1-luong-ui-den-cu
 
 - `src/data_layer/faiss_vector_store.py::clear_vector_store_data`
 
-## TV2 - Huynh  (4 chuc nang)
+## TV2 - Huynh (4 chuc nang)
 
 ### [Cot loi #3] Embedding da ngon ngu
 

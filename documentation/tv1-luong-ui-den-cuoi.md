@@ -46,6 +46,21 @@ Tai lieu tap trung vao 2 phan:
 
 Ket luan doi chieu: code hien tai khong chi co ingest, ma con co luong retrieval demo va filter source dong bo voi query.
 
+### 2.4 Nhom ham ban da hoc va vi tri cua chung
+
+#### Da hoc xong
+
+1. `save_uploaded_file` - thuoc chuc nang upload va xu ly file
+2. `ingest_multiple_uploaded_files` - thuoc chuc nang upload va xu ly file
+3. `ingest_document` - thuoc chuc nang chunking tai lieu
+4. `load_documents` - thuoc chuc nang upload va xu ly file, dong thoi dieu phoi loader PDF/DOCX
+5. `load_pdf` - thuoc nhanh doc PDF trong chuc nang upload va xu ly file
+6. `load_docx` - thuoc nhanh doc DOCX trong chuc nang upload va xu ly file
+7. `enrich_chunks_metadata` - thuoc chuc nang enrich metadata cho chunks
+8. `file_type_from_path` - ham phu tro cho metadata
+9. `upload_time_from_path` - ham phu tro cho metadata
+10. `clear_vector_store_data` - xoa du lieu tam va reset
+
 ---
 
 ## 3) Luong chinh so 1: Ingest tu UI den tao/cap nhat FAISS

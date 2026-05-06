@@ -582,16 +582,8 @@ def _card_end() -> None:
 
 
 def _render_index_state() -> None:
-    index_name = st.session_state.get("last_index_name") or "Chưa có index"
-    index_dir = st.session_state.get("last_index_dir") or "Chưa lưu"
-    uploaded = st.session_state.get("last_uploaded_file") or "Chưa upload"
-
-    st.markdown("### Trạng thái hiện tại")
-    render_chip_row([
-        f"File: {uploaded}",
-        f"Index: {index_name}",
-        f"Thư mục: {Path(index_dir).name if index_dir != 'Chưa lưu' else index_dir}",
-    ])
+    # Status display hidden by request. Keep function as no-op so callers remain unchanged.
+    return
 
 
 def _append_history(kind: str, detail: str) -> None:
@@ -1362,9 +1354,11 @@ def main() -> None:
                     st.session_state["qa_requires_pause"] = True
                     original_query = qa_query.strip()
                     effective_filter = sidebar_source_filter if sidebar_source_filter else None
+                    effective_type_filter = sidebar_file_type_filter if sidebar_file_type_filter else None
+                    effective_date_filter = sidebar_upload_date_filter if sidebar_upload_date_filter else None
                     effective_top_k = int(top_k)
                     if effective_filter and len(effective_filter) > 0:
-                        effective_top_k = int(top_k) * len(effective_filter)
+                        effective_top_k = min(12, int(top_k) * len(effective_filter))
                     live_status, emit_live = _create_live_activity_stream("AI đang xử lý theo thời gian thực...")
                     emit_live("Đang phân tích câu hỏi và lịch sử hội thoại...")
                     history_for_rewrite = list(st.session_state.get("chat_history", []))
@@ -1411,6 +1405,8 @@ def main() -> None:
                             top_k=effective_top_k,
                             retrieval_query=rewritten_query,
                             source_filter=effective_filter,
+                            file_type_filter=effective_type_filter,
+                            upload_date_filter=effective_date_filter,
                             chat_history=history_for_rewrite,
                             include_history=include_history,
                             progress_callback=lambda msg: emit_live(f"RAG: {msg}"),
@@ -1463,6 +1459,8 @@ def main() -> None:
                                     question=original_query,
                                     retrieval_query=rewritten_query,
                                     source_filter=effective_filter,
+                                    file_type_filter=effective_type_filter,
+                                    upload_date_filter=effective_date_filter,
                                     chat_history=history_for_rewrite,
                                     include_history=include_history,
                                     progress_callback=lambda msg: emit_live(f"Co-RAG: {msg}"),

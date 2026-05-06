@@ -92,6 +92,8 @@ class CoRAGChainManager:
         self,
         query: str,
         source_filter: list[str] | None = None,
+        file_type_filter: list[str] | None = None,
+        upload_date_filter: list[str] | None = None,
     ) -> tuple[list[str], list[Any]]:
         retrieved = search_similar_chunks(
             self.vector_store_idx,
@@ -99,6 +101,8 @@ class CoRAGChainManager:
             top_k=self.top_k,
             aggressive_rerank=False,
             source_filter=source_filter,
+            file_type_filter=file_type_filter,
+            upload_date_filter=upload_date_filter,
         )
         # Keep shorter chunks too, because exercise headings like "BÀI TẬP 2..."
         # are often concise but critical for counting questions.
@@ -150,6 +154,8 @@ class CoRAGChainManager:
         question: str,
         retrieval_query: str | None = None,
         source_filter: list[str] | None = None,
+        file_type_filter: list[str] | None = None,
+        upload_date_filter: list[str] | None = None,
         chat_history: list[dict] | None = None,
         include_history: bool = False,
         stop_signal: Any | None = None,
@@ -179,6 +185,8 @@ class CoRAGChainManager:
         initial_chunks, raw_docs = self._retrieve_and_format_chunks(
             retrieval_text,
             source_filter=source_filter,
+            file_type_filter=file_type_filter,
+            upload_date_filter=upload_date_filter,
         )
         all_raw_retrieved_docs.extend(raw_docs)
 
@@ -227,6 +235,8 @@ class CoRAGChainManager:
             new_chunks, new_raw_docs = self._retrieve_and_format_chunks(
                 anchored_query,
                 source_filter=source_filter,
+                file_type_filter=file_type_filter,
+                upload_date_filter=upload_date_filter,
             )
             accumulated_context = self._deduplicate_chunks(accumulated_context, new_chunks)
             all_raw_retrieved_docs.extend(new_raw_docs)
