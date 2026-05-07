@@ -210,7 +210,8 @@ def rerank_docs(query: str, docs: list[Document], top_k: int, aggressive: bool =
     if not docs:
         return []
 
-    candidate_limit = max(top_k * 8, 24)
+    # Reduced candidate limit for faster re-ranking on CPU
+    candidate_limit = max(top_k * 4, 15)
     docs = docs[:candidate_limit]
 
     toc_intent = is_toc_intent(query)
@@ -344,8 +345,16 @@ def search_similar_chunks(
             ]
 
         if bm25_docs_pool:
-            bm25_retriever = BM25Retriever.from_documents(bm25_docs_pool)
-            bm25_retriever.k = max(top_k * 3, 10)
+            # Cache BM25 retriever to avoid re-building it every query
+            @st.cache_resource(show_spinner=False)
+            def _get_cached_bm25(_docs_content_tuple):
+                return BM25Retriever.from_documents(bm25_docs_pool)
+            
+            # We use a tuple of IDs or content hashes to identify the pool uniquely for caching
+            pool_signature = tuple(id(d) for d in bm25_docs_pool[:50]) 
+            bm25_retriever = _get_cached_bm25(pool_signature)
+            
+            bm25_retriever.k = max(top_k * 2, 6)
             bm25_docs = bm25_retriever.invoke(query)
             candidates.extend(bm25_docs)
     except Exception as error:

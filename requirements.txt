@@ -13,3 +13,5 @@ pymupdf4llm>=0.2.0
 rank-bm25
 python-dotenv
 ollama
+pytesseract
+Pillow

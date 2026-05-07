@@ -16,6 +16,7 @@ from src.config import (
     SCORING_MAX_DOCS,
     SCORING_EXCERPT_CHARS,
     SCORING_CONTEXT_MAX_CHARS,
+    OLLAMA_TEMPERATURE,
 )
 from src.utils import keyword_overlap_score, normalize_for_match, source_name_from_path
 
@@ -79,7 +80,7 @@ def _heuristic_confidence_score(query: str, answer: str, context_text: str) -> i
 class OllamaInferenceEngine:
     """Class encapsulate LLM invocation with fallback logic."""
 
-    def __init__(self, model_name: str = OLLAMA_MODEL, temperature: float = 0.2):
+    def __init__(self, model_name: str = OLLAMA_MODEL, temperature: float = OLLAMA_TEMPERATURE):
         self.model_name = model_name
         self.temperature = temperature
         
@@ -96,7 +97,7 @@ class OllamaInferenceEngine:
             base_url=OLLAMA_BASE_URL,
             temperature=self.temperature,
             num_gpu=99,
-            num_thread=8,
+            num_thread=4,
             num_ctx=2560,
         )
 
@@ -106,19 +107,20 @@ class OllamaInferenceEngine:
             base_url=OLLAMA_BASE_URL,
             temperature=self.temperature,
             num_gpu=99,
-            num_thread=8,
+            num_thread=4,
             num_ctx=2560,
         )
 
     def _get_scoring_llm(self) -> OllamaLLM:
-        # Confidence scoring can use a lighter model to cut latency significantly.
-        scoring_model = FALLBACK_MODELS[0] if FALLBACK_MODELS else self.active_model
+        """Use a tiny model for scoring to minimize latency (0.5b is perfect for this)."""
+        # Prefer the 0.5b model for near-instant scoring on CPU
+        scoring_model = "qwen2.5:0.5b" 
         return OllamaLLM(
             model=scoring_model,
             base_url=OLLAMA_BASE_URL,
             temperature=0.0,
             num_gpu=99,
-            num_thread=8,
+            num_thread=4,
             num_ctx=1024,
         )
 
@@ -151,26 +153,36 @@ class OllamaInferenceEngine:
             raise
 
     def self_rag_confidence_score(self, query: str, answer: str, docs: list[Document]) -> int:
-        """Let the LLM evaluate its own answer against the retrieved context (1-10)."""
+        """Optimized Self-RAG: LLM evaluates its own answer against context quickly."""
         context_text = _build_context_for_scoring(docs)
-        scoring_prompt = (
-            "Ban la bo phan cham diem do tin cay.\n"
-            "Dua tren cau hoi, context truyen vao va cau tra loi.\n"
-            "Chiem diem theo thang 1-10, trong do: 1-3 = sai/rat yeu, 4-6 = tam on, 7-8 = tot, 9-10 = rat chac chan va bam sat context.\n"
-            "Chi tra ve DUY NHAT mot so nguyen tu 1 den 10.\n\n"
-            f"Cau hoi: {query}\n\n"
-            f"Context:\n{context_text}\n\n"
-            f"Cau tra loi: {answer}\n\n"
-            "Diem (1-10):"
+        
+        # Super-short prompt to get only a number from LLM as fast as possible
+        fast_scoring_prompt = (
+            "Assessment Rule: Score 1-10 based on how well the answer matches the context.\n"
+            f"Context: {context_text[:600]}\n" # Use shorter context for faster CPU prefill
+            f"Question: {query}\n"
+            f"Answer: {answer}\n"
+            "Score (1-10 only):"
         )
+        
         try:
+            # We use the lighter scoring LLM but with extremely short output constraint
             scoring_llm = self._get_scoring_llm()
-            score_raw = str(scoring_llm.invoke(scoring_prompt)).strip()
+            # Set small max_tokens if supported, or just rely on prompt
+            score_raw = str(scoring_llm.invoke(fast_scoring_prompt)).strip()
             matched = re.search(r"\d+", score_raw)
-            model_score = int(matched.group()) if matched else 6
-            model_score = max(1, min(10, model_score))
+            
+            # Extract and clamp the model score between 1 and 10
+            model_score = 7
+            if matched:
+                try:
+                    model_score = max(1, min(10, int(matched.group())))
+                except ValueError:
+                    model_score = 7
+            
+            # Blend with heuristic for more stability
             heuristic_score = _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)
-            blended_score = round((model_score * 0.55) + (heuristic_score * 0.45))
-            return max(1, min(10, blended_score))
+            final_score = round((model_score * 0.4) + (heuristic_score * 0.6))
+            return max(1, min(10, final_score))
         except Exception:
             return _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)

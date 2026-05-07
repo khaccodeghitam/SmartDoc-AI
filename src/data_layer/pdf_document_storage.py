@@ -1,6 +1,9 @@
 """PDF/DOCX document loading, saving, and raw text extraction."""
 from __future__ import annotations
 
+import io
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List
@@ -8,159 +11,150 @@ from typing import Any, List
 from docx import Document as DocxDocument
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_core.documents import Document
+from PIL import Image
 
 from src.config import RAW_DIR
 from src.utils import sanitize_name, source_name_from_path
 
 
 # ---------------------------------------------------------------------------
-# Document loading (from old document_loader.py)
+# Helpers
 # ---------------------------------------------------------------------------
 
-def load_pdf(path: str | Path) -> List[Document]:
-    """Load PDF with layout analysis for multi-column documents (pdfplumber)."""
-    docs = []
-    
-    try:
-        import pdfplumber
-        
-        with pdfplumber.open(str(path)) as pdf:
-            for page_num, page in enumerate(pdf.pages, 1):
-                # layout=True: Auto-detect multi-column layout
-                text = page.extract_text(layout=True)
-                
-                if text and text.strip():
-                    docs.append(Document(
-                        page_content=text,
-                        metadata={
-                            "source": str(path),
-                            "page": page_num,
-                            "file_type": "pdf",
-                            "extraction_method": "pdfplumber_layout"
-                        }
-                    ))
-        
-        return docs if docs else []
-    
-    except Exception as e:
-        # Fallback to PDFPlumberLoader if pdfplumber fails
-        print(f"⚠️ Warning: PDF layout extraction failed ({e}), using fallback")
-        loader = PDFPlumberLoader(str(path))
-        return loader.load()
+def split_stuck_vietnamese_words(text: str) -> str:
+    """
+    Fixed heuristic to split only specific impossible combinations in Vietnamese PDFs.
+    Avoids using character classes [] that cause over-splitting of common 'nh', 'ch'.
+    """
+    # Fix 'thủcông' -> 'thủ công', 'ngữcảnh' -> 'ngữ cảnh'
+    text = text.replace('ủc', 'ủ c').replace('ữc', 'ữ c')
+    # Fix 'địnhhướng' -> 'định hướng'
+    text = text.replace('ịnhh', 'ịnh h')
+    # Fix 'vựcưu' -> 'vực ưu'
+    text = text.replace('ựcư', 'ực ư')
+    # Fix 'mạnhmẽ' if stuck
+    text = text.replace('ạnhm', 'ạnh m')
+    return text
 
+
+# ---------------------------------------------------------------------------
+# Document loading
+# ---------------------------------------------------------------------------
 
 def load_pdf_advanced(path: str | Path) -> List[Document]:
-    """
-    Load PDF with advanced block detection (PyMuPDF).
-    
-    Best for multi-column documents with complex layouts.
-    Automatically sorts text blocks by position (top-bottom, left-right).
-    
-    Returns:
-        List[Document]: List of documents with preserved text order.
-    """
+    """Advanced PDF loader with smart column sorting and OCR."""
     try:
         import fitz  # PyMuPDF
-        docs = []
-        
+        import pytesseract
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
+        if os.path.exists(tessdata_dir):
+            os.environ["TESSDATA_PREFIX"] = tessdata_dir
+
+        full_text_parts = []
         with fitz.open(str(path)) as pdf:
-            for page_num, page in enumerate(pdf, 1):
-                # Get text blocks with position information
+            for page in pdf:
+                page_width = page.rect.width
+                mid_x = page_width / 2
                 blocks = page.get_text("blocks")
                 
-                # Sort blocks by Y-coordinate (top to bottom), then X-coordinate (left to right)
-                # This preserves reading order for multi-column layouts
-                # Round Y to nearest 10 to group lines on same row
-                sorted_blocks = sorted(
-                    blocks, 
-                    key=lambda b: (round(b[1], -1), b[0])
-                )
+                def get_block_group(b):
+                    x0, y0, x1, y1 = b[:4]
+                    # Titles/Full-width headers
+                    if (x1 - x0) > page_width * 0.65: return 0
+                    # Left column
+                    if x1 <= mid_x + 15: return 1
+                    # Right column
+                    if x0 >= mid_x - 15: return 2
+                    return 0
+
+                sorted_blocks = sorted(blocks, key=lambda b: (get_block_group(b), round(b[1], -1), b[0]))
+                for b in sorted_blocks:
+                    if b[6] == 0:
+                        content = b[4].strip()
+                        if content:
+                            content = split_stuck_vietnamese_words(content)
+                            full_text_parts.append(content)
                 
-                text_parts = []
-                for block in sorted_blocks:
-                    if block[6] == 0:  # Text block (not image)
-                        text = block[4].strip()
-                        if text:
-                            text_parts.append(text)
-                
-                # Join text parts with proper spacing
-                full_text = "\n".join(text_parts)
-                
-                if full_text.strip():
-                    docs.append(Document(
-                        page_content=full_text,
-                        metadata={
-                            "source": str(path),
-                            "page": page_num,
-                            "file_type": "pdf",
-                            "extraction_method": "pymupdf_blocks"
-                        }
-                    ))
-        
-        return docs if docs else []
-    
-    except ImportError:
-        # Fallback to pdfplumber if pymupdf not installed
-        print("⚠️ Warning: pymupdf not installed, falling back to pdfplumber")
-        return load_pdf(path)
+                # OCR for images
+                for img_info in page.get_images(full=True):
+                    xref = img_info[0]
+                    base_image = pdf.extract_image(xref)
+                    image_bytes = base_image.get("image")
+                    if image_bytes and len(image_bytes) > 30000:
+                        try:
+                            img = Image.open(io.BytesIO(image_bytes))
+                            ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
+                            if ocr_res and len(ocr_res) > 20:
+                                full_content = f"\n[Nội dung từ ảnh]:\n{ocr_res}"
+                                full_text_parts.append(full_content)
+                        except: pass
+
+        # Use single newline between blocks to allow smoother overlap transitions
+        final_text = "\n".join(full_text_parts).strip().replace("</div>", "").replace("<div>", "")
+        return [Document(page_content=final_text, metadata={"source": str(path), "file_type": "pdf", "extraction_method": "fitz_smart_group_sort"})]
     except Exception as e:
-        # Fallback to pdfplumber if pymupdf fails
-        print(f"⚠️ Warning: PyMuPDF extraction failed ({e}), using fallback")
+        print(f"⚠️ PDF Advanced failed: {e}")
         return load_pdf(path)
 
 
 def load_docx(path: str | Path) -> List[Document]:
-    doc = DocxDocument(str(path))
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
-    full_text = "\n".join(paragraphs).strip()
+    """Context-aware DOCX loader."""
+    try:
+        doc = DocxDocument(str(path))
+        import pytesseract
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
+        if os.path.exists(tessdata_dir):
+            os.environ["TESSDATA_PREFIX"] = tessdata_dir
 
-    if not full_text:
-        return []
+        full_content_parts = []
+        for paragraph in doc.paragraphs:
+            text = paragraph.text.strip()
+            if text:
+                full_content_parts.append(text)
+            
+            for run in paragraph.runs:
+                if 'drawing' in run.element.xml:
+                    try:
+                        blip_ids = re.findall(r'r:embed="([^"]+)"', run.element.xml)
+                        for rId in blip_ids:
+                            image_part = doc.part.related_parts[rId]
+                            img = Image.open(io.BytesIO(image_part.blob))
+                            ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
+                            if ocr_res and len(ocr_res) > 15:
+                                full_content_parts.append(f"\n[Nội dung hình ảnh tại đây]:\n{ocr_res}\n")
+                    except: pass
 
-    return [
-        Document(
-            page_content=full_text,
-            metadata={
-                "source": str(path),
-                "file_type": "docx",
-            },
-        )
-    ]
+        all_text = "\n".join(full_content_parts).strip()
+        # No splitting logic for Word as it is usually clean
+        return [Document(page_content=all_text, metadata={"source": str(path), "file_type": "docx"})]
+    except Exception as e:
+        print(f"⚠️ load_docx failed: {e}")
+        doc = DocxDocument(str(path))
+        return [Document(page_content="\n".join([p.text for p in doc.paragraphs]), metadata={"source": str(path)})]
 
 
-def load_documents(
-    path: str | Path, 
-    use_advanced_pdf: bool = False
-) -> List[Document]:
-    """
-    Load documents from PDF or DOCX files.
-    
-    Args:
-        path: Path to the document file
-        use_advanced_pdf: If True, use PyMuPDF with block detection for PDFs.
-                         Better for multi-column layouts.
-    
-    Returns:
-        List[Document]: List of loaded documents
-    """
+def load_pdf(path: str | Path) -> List[Document]:
+    """Fallback loader."""
+    docs = []
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(path)) as pdf:
+            for page_num, page in enumerate(pdf.pages, 1):
+                text = page.extract_text(layout=True)
+                if text: docs.append(Document(page_content=text, metadata={"source": str(path), "page": page_num}))
+        return docs
+    except: return []
+
+def load_documents(path: str | Path, use_advanced_pdf: bool = False) -> List[Document]:
     file_path = Path(path)
     suffix = file_path.suffix.lower()
-
     if suffix == ".pdf":
-        if use_advanced_pdf:
-            return load_pdf_advanced(file_path)
-        else:
-            return load_pdf(file_path)
+        return load_pdf_advanced(file_path) if use_advanced_pdf else load_pdf(file_path)
     if suffix == ".docx":
         return load_docx(file_path)
-
-    raise ValueError(f"Unsupported file type: {suffix}")
-
-
-
-# ---------------------------------------------------------------------------
-# File saving and metadata
-# ---------------------------------------------------------------------------
+    raise ValueError(f"Unsupported: {suffix}")
 
 def save_uploaded_file(uploaded_file: Any, target_dir: Path = RAW_DIR) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -168,32 +162,14 @@ def save_uploaded_file(uploaded_file: Any, target_dir: Path = RAW_DIR) -> Path:
     file_path.write_bytes(uploaded_file.getbuffer())
     return file_path
 
-
-def file_type_from_path(file_path: Path) -> str:
-    return file_path.suffix.lower().lstrip(".") or "unknown"
-
-
-def upload_time_from_path(file_path: Path) -> str:
-    try:
-        return datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(timespec="seconds")
-    except Exception:
-        return datetime.now().isoformat(timespec="seconds")
-
-
 def enrich_chunks_metadata(chunks: list[Document], file_path: Path) -> list[Document]:
     source = str(file_path)
-    file_name = file_path.name
-    file_type = file_type_from_path(file_path)
-    upload_time = upload_time_from_path(file_path)
-    upload_date = upload_time[:10]
-
     for doc in chunks:
-        metadata = dict(doc.metadata or {})
-        metadata.setdefault("source", source)
-        metadata["file_name"] = metadata.get("file_name") or source_name_from_path(str(metadata.get("source", source))) or file_name
-        metadata["file_type"] = metadata.get("file_type") or file_type
-        metadata["upload_time"] = metadata.get("upload_time") or upload_time
-        metadata["upload_date"] = metadata.get("upload_date") or upload_date
-        doc.metadata = metadata
-
+        m = dict(doc.metadata or {})
+        m.setdefault("source", source)
+        m["file_name"] = file_path.name
+        m["file_type"] = file_path.suffix.lower().lstrip(".")
+        m["upload_time"] = datetime.now().isoformat(timespec="seconds")
+        m["upload_date"] = m["upload_time"][:10]
+        doc.metadata = m
     return chunks

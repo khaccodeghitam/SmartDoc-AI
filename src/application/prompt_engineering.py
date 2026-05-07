@@ -77,9 +77,8 @@ def build_rag_prompt(
     multi_part_hint = ""
     if len(question_parts) > 1:
         multi_part_hint = (
-            f"Câu hỏi gồm {len(question_parts)} ý. BẮT BUỘC trả lời đủ từng ý theo thứ tự 1..{len(question_parts)}. "
-            "Ý nào không thấy trong tài liệu thì ghi rõ: 'Không thấy thông tin trong tài liệu'.\n"
-            "Mỗi ý trả lời 2-4 gạch đầu dòng ngắn gọn, ưu tiên đủ ý hơn là quá ngắn.\n"
+            f"Câu hỏi gồm {len(question_parts)} ý. Hãy trả lời đầy đủ từng ý một cách rõ ràng.\n"
+            "Mỗi ý trả lời 2-4 gạch đầu dòng hoặc đoạn văn ngắn gọn.\n"
             "KHÔNG tự suy diễn mốc thời gian/sự kiện ngoài ngữ cảnh đã cho.\n"
         )
 
@@ -90,9 +89,9 @@ def build_rag_prompt(
             "Dựa vào ngữ cảnh trả lời câu hỏi. Trả lời ngắn gọn, chính xác.\n"
             "Nếu không có thông tin, nói rõ là không tìm thấy.\n"
             "Kèm tên file gốc khi trích dẫn [file.pdf], không gọi chung chung.\n"
-            "Không thêm thông tin ngoài context. Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n"
+            "Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n"
             "Không tự bịa mốc năm, sự kiện, tên đại hội nếu context không có.\n"
-            "Với câu nhiều ý, bắt buộc định dạng: 'Ý 1:', 'Ý 2:', ... để tránh bỏ sót.\n\n"
+            "Trình bày câu trả lời mạch lạc, sử dụng các đoạn văn hoặc gạch đầu dòng tự nhiên.\n\n"
             f"{multi_part_hint}"
             f"{doc_overview_text}"
             f"{history_text}"
@@ -122,11 +121,13 @@ def build_rag_prompt(
 def build_corag_sufficiency_check_prompt(question: str, contexts: list[str]) -> str:
     context_text = "\n\n".join(contexts) if contexts else "(Chưa có ngữ cảnh)"
     return (
-        "Đánh giá: ngữ cảnh hiện tại có đủ trả lời câu hỏi không?\n\n"
-        f"Câu hỏi: {question}\n\n"
-        f"Ngữ cảnh hiện tại:\n{context_text}\n\n"
-        "Nếu ĐỦ: Trả lời 'SUFFICIENT'.\n"
-        "Nếu CHƯA ĐỦ: Trả lời 'SUB_QUERY: <tìm kiếm bổ sung>' (không giải thích thêm)."
+        "Bạn là giám định viên thông tin. Hãy kiểm tra xem ngữ cảnh dưới đây có chứa nội dung để trả lời cho câu hỏi không.\n\n"
+        f"CÂU HỎI: {question}\n\n"
+        f"NGỮ CẢNH HIỆN TẠI:\n{context_text}\n\n"
+        "QUY TẮC:\n"
+        "- Nếu ngữ cảnh ĐÃ CÓ thông tin chính (ví dụ: đã thấy tên chương, định nghĩa hoặc nội dung cốt lõi): Trả lời duy nhất từ 'SUFFICIENT'.\n"
+        "- Chỉ khi hoàn toàn không có thông tin hoặc thông tin quá sơ sài: Trả lời 'SUB_QUERY: <câu hỏi tìm kiếm bổ sung>'.\n"
+        "Ưu tiên trả lời SUFFICIENT để tiết kiệm thời gian."
     )
 
 
@@ -143,13 +144,13 @@ def build_corag_final_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
-            "Dựa vào ngữ cảnh trả lời chi tiết. Kèm tên file gốc [file.pdf].\n"
-            "Không gọi chung chung 'Tài liệu 1', 'Tài liệu 2'. Không lặp lại nguyên văn ngữ cảnh hay thêm mục 'Dữ liệu gốc'.\n\n"
+            "Dựa hoàn toàn vào ngữ cảnh để trả lời câu hỏi. Ưu tiên giữ nguyên các thuật ngữ chuyên môn và tiêu đề từ ngữ cảnh.\n"
+            "TUYỆT ĐỐI KHÔNG lặp lại nội dung và KHÔNG tự bịa ra từ ngữ mới. Trình bày trung thực, chính xác.\n\n"
             f"{doc_overview_text}"
             f"{history_text}"
-            f"Ngữ cảnh tài liệu tích lũy được:\n{context_text}\n\n"
-            f"Câu hỏi: {question}\n\n"
-            "Câu trả lời:"
+            f"NGỮ CẢNH TÀI LIỆU:\n{context_text}\n\n"
+            f"CÂU HỎI: {question}\n\n"
+            "CÂU TRẢ LỜI (TRÍCH XUẤT CHÍNH XÁC):"
         )
 
     return (

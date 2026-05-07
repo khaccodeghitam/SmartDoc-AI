@@ -44,10 +44,17 @@ def ingest_document(
     path_obj = Path(file_path)
     raw_docs = load_documents(path_obj, use_advanced_pdf=use_advanced_pdf)
 
+    # We use RecursiveCharacterTextSplitter but with smart separators
+    # to avoid splitting too early on small paragraphs.
+    # We want chunks to be as close to chunk_size as possible.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        # Re-ordering and adding more punctuation to allow overlap to catch context
+        separators=["\n\n", "\n", ". ", "! ", "? ", " ", ""],
+        length_function=len,
     )
+        
     chunks = splitter.split_documents(raw_docs)
     chunks = enrich_chunks_metadata(chunks, path_obj)
 

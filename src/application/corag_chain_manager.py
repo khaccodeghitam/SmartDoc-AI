@@ -55,7 +55,7 @@ class CoRAGChainManager:
     ) -> None:
         self.vector_store_idx = index_dir
         self.model_engine = model_engine
-        self.max_rounds = max_rounds
+        self.max_rounds = 2  # Reduced from 3 for faster local execution
         self.top_k = top_k
         self._faiss_store = None
 
@@ -74,19 +74,27 @@ class CoRAGChainManager:
             # Never break QA flow if UI progress callback fails.
             pass
 
-    @staticmethod
-    def _is_explicit_sufficient_signal(assessment: str) -> bool:
-        """Accept only explicit SUFFICIENT responses to avoid false positives like INSUFFICIENT."""
+    def _is_explicit_sufficient_signal(self, assessment: str, question: str, context: list[str]) -> bool:
+        """Accept SUFFICIENT if present in the first few words, or if keywords match strongly."""
         normalized = (assessment or "").strip().upper()
         if not normalized:
             return False
 
+        # 1. Check for keyword SUFFICIENT in the first line
         first_line = normalized.splitlines()[0].strip()
-        if not first_line:
-            return False
+        if _SUFFICIENT_SIGNAL in first_line:
+            return True
+            
+        # 2. Heuristic Early Exit: Check if context already contains core keywords of the question
+        q_keywords = [w.lower() for w in question.split() if len(w) > 3]
+        if q_keywords:
+            full_context_text = "\n".join(context).lower()
+            matches = sum(1 for kw in q_keywords if kw in full_context_text)
+            # If 70% of keywords found, consider it likely sufficient to stop looping
+            if matches / len(q_keywords) >= 0.7:
+                return True
 
-        first_word = first_line.split()[0].strip(".,:;!?()[]{}\"'`")
-        return first_word == _SUFFICIENT_SIGNAL
+        return False
 
     def _retrieve_and_format_chunks(
         self,
@@ -204,6 +212,16 @@ class CoRAGChainManager:
         for round_num in range(2, self.max_rounds + 1):
             if self._is_cancelled(stop_signal):
                 raise RuntimeError("Co-RAG cancelled by user.")
+            # 1. Heuristic Early Exit FIRST (No LLM call yet)
+            q_keywords = [w.lower() for w in question_text.split() if len(w) > 3]
+            if q_keywords:
+                full_context_text = "\n".join(accumulated_context).lower()
+                matches = sum(1 for kw in q_keywords if kw in full_context_text)
+                if matches / len(q_keywords) >= 0.8:  # Strict 80% keyword match
+                    self._notify_progress(progress_callback, "Thuật toán phát hiện đã đủ từ khóa quan trọng, bỏ qua bước AI đánh giá để tăng tốc...")
+                    break
+
+            # 2. Only if heuristic fails, ask LLM (this saves 1-2 minutes if heuristic matches)
             self._notify_progress(
                 progress_callback,
                 f"Vòng {round_num - 1}: đang đánh giá mức độ đủ thông tin...",
@@ -221,8 +239,8 @@ class CoRAGChainManager:
                 llm_assessment=assessment,
             )
 
-            if self._is_explicit_sufficient_signal(assessment):
-                self._notify_progress(progress_callback, "Ngữ cảnh đã đủ, chuyển sang bước tổng hợp câu trả lời Co-RAG...")
+            if self._is_explicit_sufficient_signal(assessment, question_text, accumulated_context):
+                self._notify_progress(progress_callback, "AI xác nhận ngữ cảnh đã đủ, kết thúc truy xuất sớm...")
                 break
 
             sub_query = _extract_subquery(assessment, fallback=retrieval_text)
