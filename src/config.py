@@ -12,9 +12,9 @@ DEFAULT_CHUNK_OVERLAP = 100
 DEFAULT_TOP_K = 5
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen2.5:0.5b"
+OLLAMA_MODEL = "qwen2.5:7b"
 
-FALLBACK_MODELS = ("qwen2.5:1.5b", "qwen2.5:0.5b")
+FALLBACK_MODELS = ("qwen2.5:7b",)
 SCORING_MAX_DOCS = 8
 SCORING_EXCERPT_CHARS = 180
 SCORING_CONTEXT_MAX_CHARS = 1200

@@ -904,6 +904,8 @@ def main() -> None:
             chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=DEFAULT_CHUNK_SIZE, step=100)
             chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=DEFAULT_CHUNK_OVERLAP, step=20)
             top_k = st.number_input("Top-k search", min_value=1, max_value=10, value=DEFAULT_TOP_K, step=1)
+            use_advanced_pdf = True
+            st.caption("Mặc định dùng PyMuPDF (block-sorting) cho PDF đa cột.")
 
             available_sources_sidebar = st.session_state.get("available_sources", [])
             available_file_types_sidebar = st.session_state.get("available_file_types", [])
@@ -995,6 +997,7 @@ def main() -> None:
                                 uploaded_files=uploaded_files,
                                 chunk_size=int(chunk_size),
                                 chunk_overlap=int(chunk_overlap),
+                                use_advanced_pdf=bool(use_advanced_pdf),
                             )
                             
                             existing_index = st.session_state.get("last_index_dir")
@@ -1143,6 +1146,7 @@ def main() -> None:
                         rows = evaluate_chunk_strategies(
                             file_paths=ingested_paths, query=eval_query.strip(),
                             strategies=strategies, top_k=int(top_k),
+                            use_advanced_pdf=use_advanced_pdf,
                         )
                     st.session_state["chunk_benchmark_rows"] = rows
 

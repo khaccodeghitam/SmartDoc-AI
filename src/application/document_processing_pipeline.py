@@ -27,9 +27,22 @@ def ingest_document(
     file_path: str | Path,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    use_advanced_pdf: bool = False,
 ) -> IngestResult:
+    """
+    Ingest and process a single document.
+    
+    Args:
+        file_path: Path to the document
+        chunk_size: Size of text chunks
+        chunk_overlap: Overlap between chunks
+        use_advanced_pdf: Use PyMuPDF with block detection for PDFs (better for multi-column)
+    
+    Returns:
+        IngestResult with processed chunks
+    """
     path_obj = Path(file_path)
-    raw_docs = load_documents(path_obj)
+    raw_docs = load_documents(path_obj, use_advanced_pdf=use_advanced_pdf)
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -50,7 +63,20 @@ def ingest_multiple_uploaded_files(
     uploaded_files: list[Any],
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    use_advanced_pdf: bool = False,
 ) -> IngestResult:
+    """
+    Ingest and process multiple uploaded files.
+    
+    Args:
+        uploaded_files: List of uploaded file objects
+        chunk_size: Size of text chunks
+        chunk_overlap: Overlap between chunks
+        use_advanced_pdf: Use PyMuPDF with block detection for PDFs
+    
+    Returns:
+        IngestResult with all chunks combined
+    """
     all_chunks: list[Document] = []
     total_raw_docs = 0
     file_paths: list[Path] = []
@@ -58,7 +84,7 @@ def ingest_multiple_uploaded_files(
     for uploaded_file in uploaded_files:
         file_path = save_uploaded_file(uploaded_file)
         file_paths.append(file_path)
-        result = ingest_document(file_path, chunk_size, chunk_overlap)
+        result = ingest_document(file_path, chunk_size, chunk_overlap, use_advanced_pdf=use_advanced_pdf)
         total_raw_docs += result.raw_docs_count
         all_chunks.extend(result.chunks)
 
@@ -79,7 +105,21 @@ def evaluate_chunk_strategies(
     query: str,
     strategies: list[tuple[int, int]],
     top_k: int = DEFAULT_TOP_K,
+    use_advanced_pdf: bool = False,
 ) -> list[dict[str, Any]]:
+    """
+    Evaluate different chunk strategies for document processing.
+    
+    Args:
+        file_paths: List of document paths
+        query: Query to evaluate relevance
+        strategies: List of (chunk_size, chunk_overlap) tuples to test
+        top_k: Number of top results to consider
+        use_advanced_pdf: Use PyMuPDF with block detection for PDFs
+    
+    Returns:
+        List of evaluation results for each strategy
+    """
     evaluations: list[dict[str, Any]] = []
     if not file_paths:
         return evaluations
@@ -94,6 +134,7 @@ def evaluate_chunk_strategies(
                     file_path=file_path,
                     chunk_size=int(chunk_size),
                     chunk_overlap=int(chunk_overlap),
+                    use_advanced_pdf=use_advanced_pdf,
                 )
                 all_chunks.extend(ingest_result.chunks)
             except Exception:

@@ -8,6 +8,8 @@ sentence-transformers
 pdfplumber
 pypdf
 python-docx
+pymupdf>=1.23.8
+pymupdf4llm>=0.2.0
 rank-bm25
 python-dotenv
 ollama
