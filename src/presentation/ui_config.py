@@ -563,12 +563,6 @@ pre code {
     background: rgba(31, 55, 115, 0.72) !important;
 }
 
-textarea[aria-label="Nhập câu hỏi"] {
-    resize: none !important;
-    overflow: hidden !important;
-    min-height: 80px;
-}
-
 @media (max-width: 840px) {
     .smartdoc-title {
         font-size: 1.58rem;
