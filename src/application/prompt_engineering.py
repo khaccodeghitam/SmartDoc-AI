@@ -86,8 +86,8 @@ def build_rag_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
-            "Dựa vào ngữ cảnh trả lời câu hỏi. Trả lời ngắn gọn, chính xác.\n"
-            "Nếu không có thông tin, nói rõ là không tìm thấy.\n"
+            "Dựa vào ngữ cảnh được cung cấp để trả lời câu hỏi. Hãy nỗ lực tìm kiếm và tổng hợp thông tin liên quan dù là một phần.\n"
+            "Chỉ khi hoàn toàn không có bất kỳ dữ kiện nào liên quan đến câu hỏi trong ngữ cảnh, hãy trả lời là không tìm thấy.\n"
             "Kèm tên file gốc khi trích dẫn [file.pdf], không gọi chung chung.\n"
             "Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n"
             "Không tự bịa mốc năm, sự kiện, tên đại hội nếu context không có.\n"

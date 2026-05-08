@@ -150,6 +150,11 @@ Nguyen tac:
 
 - `src/data_layer/faiss_vector_store.py::clear_vector_store_data`
 
+### [Phat trien #10] Advanced RAG / Self-RAG
+
+- `src/application/corag_chain_manager.py::CoRAGChainManager`
+- `src/model_layer/ollama_inference_engine.py::self_rag_confidence_score`
+
 ## TV2 - Huynh (4 chuc nang)
 
 ### [Cot loi #3] Embedding da ngon ngu
@@ -206,16 +211,12 @@ Nguyen tac:
 
 Luu y trang thai hien tai: module da co, nhung chua noi full vao luong Q&A trong UI.
 
-### [Phat trien #10] Advanced RAG / Self-RAG
-
-- `src/application/corag_chain_manager.py::CoRAGChainManager`
-- `src/model_layer/ollama_inference_engine.py::self_rag_confidence_score`
-
 ## TV5 - Nhi (4 chuc nang)
 
-### [Cot loi #9] UI Streamlit
+### [Cot loi #9] OCR (Quet anh thanh van ban)
 
-- `src/presentation/streamlit_app.py::main`
+- `src/application/document_processing_pipeline.py::ingest_document` (Phan tich block anh)
+- `src/data_layer/pdf_document_storage.py::extract_text_from_image`
 
 ### [Cot loi #10] Error handling cho user
 

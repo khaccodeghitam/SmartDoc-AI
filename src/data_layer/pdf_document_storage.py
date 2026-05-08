@@ -53,7 +53,7 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
 
         full_text_parts = []
         with fitz.open(str(path)) as pdf:
-            for page in pdf:
+            for page_num, page in enumerate(pdf, start=1):
                 page_width = page.rect.width
                 mid_x = page_width / 2
                 blocks = page.get_text("blocks")
@@ -68,31 +68,88 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                     if x0 >= mid_x - 15: return 2
                     return 0
 
-                sorted_blocks = sorted(blocks, key=lambda b: (get_block_group(b), round(b[1], -1), b[0]))
-                for b in sorted_blocks:
-                    if b[6] == 0:
-                        content = b[4].strip()
+                # Sử dụng cấu trúc Dictionary để lấy cả Text và Image theo đúng thứ tự
+                page_dict = page.get_text("dict")
+                page_elements = []
+                
+                for block in page_dict["blocks"]:
+                    bbox = block["bbox"] # (x0, y0, x1, y1)
+                    group = get_block_group(bbox)
+                    
+                    if block["type"] == 0: # Khối văn bản
+                        # Ghép các dòng trong block
+                        block_text = ""
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                block_text += span["text"]
+                        
+                        content = block_text.strip()
                         if content:
                             content = split_stuck_vietnamese_words(content)
-                            full_text_parts.append(content)
-                
-                # OCR for images
-                for img_info in page.get_images(full=True):
-                    xref = img_info[0]
-                    base_image = pdf.extract_image(xref)
-                    image_bytes = base_image.get("image")
-                    if image_bytes and len(image_bytes) > 30000:
+                            page_elements.append({
+                                "y": bbox[1], "x": bbox[0], "group": group,
+                                "content": content
+                            })
+                            
+                    elif block["type"] == 1: # Khối hình ảnh
                         try:
-                            img = Image.open(io.BytesIO(image_bytes))
-                            ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
-                            if ocr_res and len(ocr_res) > 20:
-                                full_content = f"\n[Nội dung từ ảnh]:\n{ocr_res}"
-                                full_text_parts.append(full_content)
+                            image_bytes = block["image"]
+                            if image_bytes and len(image_bytes) > 5000:
+                                img = Image.open(io.BytesIO(image_bytes))
+                                ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
+                                if ocr_res and len(ocr_res) > 10:
+                                    page_elements.append({
+                                        "y": bbox[1], "x": bbox[0], "group": group,
+                                        "content": f"\n[Nội dung từ ảnh]:\n{ocr_res}"
+                                    })
                         except: pass
 
-        # Use single newline between blocks to allow smoother overlap transitions
-        final_text = "\n".join(full_text_parts).strip().replace("</div>", "").replace("<div>", "")
-        return [Document(page_content=final_text, metadata={"source": str(path), "file_type": "pdf", "extraction_method": "fitz_smart_group_sort"})]
+                # Nếu trang trống trơn (có thể là trang scan hoàn toàn)
+                if not page_elements:
+                    try:
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        full_page_ocr = pytesseract.image_to_string(img, lang="vie").strip()
+                        if len(full_page_ocr) > 20:
+                            page_elements.append({
+                                "y": 0, "x": 0, "group": 0,
+                                "content": f"\n[Nội dung quét toàn trang]:\n{full_page_ocr}"
+                            })
+                    except: pass
+
+                # --- THUẬT TOÁN SẮP XẾP THEO VÙNG (REGIONAL COLUMN SORTING) ---
+                # Sắp xếp tất cả theo Y để xử lý từ trên xuống dưới
+                page_elements.sort(key=lambda e: e["y"])
+                
+                final_page_elements = []
+                temp_column_elements = []
+                
+                for el in page_elements:
+                    if el["group"] == 0:
+                        # Nếu gặp Group 0 (Toàn khổ), ta phải "xả" hết các cột đang chờ
+                        if temp_column_elements:
+                            # Sắp xếp các cột đang chờ: Nhóm 1 (Trái) trước, rồi đến Nhóm 2 (Phải)
+                            temp_column_elements.sort(key=lambda x: (x["group"], x["y"]))
+                            final_page_elements.extend(temp_column_elements)
+                            temp_column_elements = []
+                        final_page_elements.append(el)
+                    else:
+                        # Gom các khối cột lại để xử lý sau
+                        temp_column_elements.append(el)
+                
+                # Xả nốt các khối cột còn lại ở cuối trang
+                if temp_column_elements:
+                    temp_column_elements.sort(key=lambda x: (x["group"], x["y"]))
+                    final_page_elements.extend(temp_column_elements)
+
+                for el in final_page_elements:
+                    full_text_parts.append(el["content"])
+
+        # Dùng \n\n để phân tách các khối rõ ràng, giúp Splitter nhận diện đoạn văn tốt hơn
+        final_text = "\n\n".join(full_text_parts).strip().replace("</div>", "").replace("<div>", "")
+        # Loại bỏ các dấu xuống dòng thừa thãi trong nội dung để tránh split vụn
+        final_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', final_text) 
+        return [Document(page_content=final_text, metadata={"source": str(path), "file_type": "pdf", "page": page_num, "extraction_method": "fitz_regional_v3"})]
     except Exception as e:
         print(f"⚠️ PDF Advanced failed: {e}")
         return load_pdf(path)
@@ -142,7 +199,12 @@ def load_pdf(path: str | Path) -> List[Document]:
         import pdfplumber
         with pdfplumber.open(str(path)) as pdf:
             for page_num, page in enumerate(pdf.pages, 1):
-                text = page.extract_text(layout=True)
+                # Tinh chinh x_tolerance de tranh dinh chu (default thuong la 3)
+                text = page.extract_text(
+                    layout=True, 
+                    x_tolerance=2, 
+                    y_tolerance=2
+                )
                 if text: docs.append(Document(page_content=text, metadata={"source": str(path), "page": page_num}))
         return docs
     except: return []

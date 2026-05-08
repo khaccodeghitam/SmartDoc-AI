@@ -47,14 +47,18 @@ def ingest_document(
     # We use RecursiveCharacterTextSplitter but with smart separators
     # to avoid splitting too early on small paragraphs.
     # We want chunks to be as close to chunk_size as possible.
+    # Điều chỉnh separators để ưu tiên gom văn bản thay vì ngắt quá sớm
+    # Bỏ \n\n lên đầu đôi khi làm chunk bị cụt nếu đoạn văn ngắn.
+    # Ta sẽ dùng danh sách linh hoạt hơn.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        # Re-ordering and adding more punctuation to allow overlap to catch context
-        separators=["\n\n", "\n", ". ", "! ", "? ", " ", ""],
         length_function=len,
+        is_separator_regex=False,
+        # Chi dung khoang trang de ep no overlap o bat cu dau gan moc 1000
+        # Day la cach duy nhat de co sliding window overlap thuc thu
+        separators=[" ", ""],
     )
-        
     chunks = splitter.split_documents(raw_docs)
     chunks = enrich_chunks_metadata(chunks, path_obj)
 
@@ -72,18 +76,6 @@ def ingest_multiple_uploaded_files(
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     use_advanced_pdf: bool = False,
 ) -> IngestResult:
-    """
-    Ingest and process multiple uploaded files.
-    
-    Args:
-        uploaded_files: List of uploaded file objects
-        chunk_size: Size of text chunks
-        chunk_overlap: Overlap between chunks
-        use_advanced_pdf: Use PyMuPDF with block detection for PDFs
-    
-    Returns:
-        IngestResult with all chunks combined
-    """
     all_chunks: list[Document] = []
     total_raw_docs = 0
     file_paths: list[Path] = []
@@ -112,7 +104,7 @@ def evaluate_chunk_strategies(
     query: str,
     strategies: list[tuple[int, int]],
     top_k: int = DEFAULT_TOP_K,
-    use_advanced_pdf: bool = False,
+    use_advanced_pdf: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Evaluate different chunk strategies for document processing.
