@@ -61,6 +61,55 @@ def _join_spans_with_spacing(spans: list[dict]) -> str:
     return "".join(parts)
 
 
+def _join_chars_with_spacing(chars: list[dict], gap_ratio: float, min_gap: float) -> str:
+    parts: list[str] = []
+    prev: dict | None = None
+    for ch in chars:
+        text = ch.get("c", "")
+        if not text:
+            continue
+        if prev is not None:
+            prev_bbox = prev.get("bbox")
+            curr_bbox = ch.get("bbox")
+            if prev_bbox and curr_bbox:
+                gap = curr_bbox[0] - prev_bbox[2]
+                size = min(prev.get("size", 10.0), ch.get("size", 10.0))
+                if size <= 0:
+                    size = max(1.0, prev_bbox[3] - prev_bbox[1])
+                threshold = max(min_gap, size * gap_ratio)
+                if gap > threshold and parts and not parts[-1].endswith(" "):
+                    parts.append(" ")
+            else:
+                if parts and parts[-1] and parts[-1][-1].isalnum() and text[0].isalnum():
+                    parts.append(" ")
+        parts.append(text)
+        prev = ch
+    return "".join(parts)
+
+
+def _extract_line_text_rawdict(line: dict, gap_ratio: float, min_gap: float) -> str:
+    chars: list[dict] = []
+    for span in line.get("spans", []):
+        span_size = span.get("size", 10.0)
+        for ch in span.get("chars", []):
+            if ch.get("c"):
+                chars.append({"c": ch.get("c"), "bbox": ch.get("bbox"), "size": span_size})
+
+    if not chars:
+        return ""
+    chars.sort(key=lambda item: item["bbox"][0] if item.get("bbox") else 0)
+    return _join_chars_with_spacing(chars, gap_ratio, min_gap).strip()
+
+
+def _extract_block_text_rawdict(block: dict, gap_ratio: float, min_gap: float) -> str:
+    lines: list[str] = []
+    for line in block.get("lines", []):
+        line_text = _extract_line_text_rawdict(line, gap_ratio, min_gap)
+        if line_text:
+            lines.append(line_text)
+    return "\n".join(lines)
+
+
 def _score_extracted_text(text: str) -> float:
     if not text:
         return 1e9
@@ -147,8 +196,11 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                         return 2
                     return 0
 
-                # Sử dụng cấu trúc Dictionary để lấy cả Text và Image theo đúng thứ tự
-                page_dict = page.get_text("dict")
+                char_gap_ratio = 0.25
+                char_min_gap = 1.0
+
+                # Sử dụng rawdict để lấy từng ký tự cho spacing chính xác hơn
+                page_dict = page.get_text("rawdict")
                 page_elements = []
 
                 for block in page_dict["blocks"]:
@@ -157,13 +209,7 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
 
                     if block["type"] == 0: # Khối văn bản
                         # Ghép các dòng trong block
-                        block_text_lines: list[str] = []
-                        for line in block["lines"]:
-                            line_text = _join_spans_with_spacing(line.get("spans", [])).strip()
-                            if line_text:
-                                block_text_lines.append(line_text)
-
-                        block_text = "\n".join(block_text_lines)
+                        block_text = _extract_block_text_rawdict(block, char_gap_ratio, char_min_gap)
 
                         content = block_text.strip()
                         if content:
