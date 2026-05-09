@@ -24,16 +24,14 @@ from src.utils import sanitize_name, source_name_from_path
 def split_stuck_vietnamese_words(text: str) -> str:
     """
     Fixed heuristic to split only specific impossible combinations in Vietnamese PDFs.
-    Avoids using character classes [] that cause over-splitting of common 'nh', 'ch'.
     """
-    # Fix 'thủcông' -> 'thủ công', 'ngữcảnh' -> 'ngữ cảnh'
-    text = text.replace('ủc', 'ủ c').replace('ữc', 'ữ c')
-    # Fix 'địnhhướng' -> 'định hướng'
-    text = text.replace('ịnhh', 'ịnh h')
-    # Fix 'vựcưu' -> 'vực ưu'
-    text = text.replace('ựcư', 'ực ư')
-    # Fix 'mạnhmẽ' if stuck
-    text = text.replace('ạnhm', 'ạnh m')
+    # Fix 'thủcông', 'ngữcảnh', 'sốcăn', 'bổsung', 'tổhợp'
+    replacements = {
+        'ủc': 'ủ c', 'ữc': 'ữ c', 'ịnhh': 'ịnh h', 'ựcư': 'ực ư', 
+        'ạnhm': 'ạnh m', 'ốcă': 'ố că', 'ổsu': 'ổ su', 'ổhợ': 'ổ hợ'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
     return text
 
 
@@ -159,8 +157,8 @@ def _extract_pdfplumber_text(path: str | Path) -> tuple[str, list[Document]]:
 def load_pdf_advanced(path: str | Path) -> List[Document]:
     """Advanced PDF loader with smart column sorting and OCR."""
     try:
-        import fitz  # PyMuPDF
-        import pytesseract
+        import fitz
+        import pytesseract # type: ignore
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
         if os.path.exists(tessdata_dir):
@@ -222,16 +220,34 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                     elif block["type"] == 1: # Khối hình ảnh
                         try:
                             image_bytes = block["image"]
-                            if image_bytes and len(image_bytes) > 5000:
+                            if image_bytes and len(image_bytes) > 500:
                                 img = Image.open(io.BytesIO(image_bytes))
                                 ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
-                                if ocr_res and len(ocr_res) > 10:
+                                if ocr_res and len(ocr_res) > 5:
                                     page_elements.append({
                                         "y0": bbox[1], "y1": bbox[3], "x": bbox[0], "x1": bbox[2],
                                         "group": group,
                                         "content": f"\n[Nội dung từ ảnh]:\n{ocr_res}"
                                     })
                         except: pass
+
+                # --- QUÉT ẢNH DỰ PHÒNG (BACKUP SCAN) ---
+                try:
+                    img_list = page.get_images(full=True)
+                    for img_info in img_list:
+                        xref = img_info[0]
+                        base_image = pdf.extract_image(xref)
+                        image_bytes = base_image["image"]
+                        if len(image_bytes) > 1000:
+                            img = Image.open(io.BytesIO(image_bytes))
+                            ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
+                            if ocr_res and len(ocr_res) > 10:
+                                page_elements.append({
+                                    "y0": page_height / 2, "y1": page_height / 2 + 5, 
+                                    "x": 0, "x1": page_width, "group": 0,
+                                    "content": f"\n[Nội dung bổ sung từ ảnh UI]:\n{ocr_res}"
+                                })
+                except: pass
 
                 # Nếu trang trống trơn (có thể là trang scan hoàn toàn)
                 if not page_elements:
@@ -293,9 +309,14 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                     return switches / (len(groups) - 1)
 
                 row_pair_ratio = compute_row_pair_ratio(left_blocks, right_blocks)
-                layout_mode = "row" if row_pair_ratio >= row_pair_threshold else "column"
-                if (top_fullwidth or column_separated) and left_blocks and right_blocks:
-                    if len(left_blocks) >= 3 and len(right_blocks) >= 3:
+                # Ưu tiên Column mode cho academic papers trừ khi nó thực sự giống 1 cái bảng
+                layout_mode = "column" 
+                if row_pair_ratio >= 0.85: # Chỉ dùng Row mode nếu cực kỳ giống bảng (85% khớp hàng)
+                    layout_mode = "row"
+                
+                # Nếu có đủ dữ kiện của 1 trang 2 cột, ép buộc dùng Column mode
+                if left_blocks and right_blocks:
+                    if len(left_blocks) >= 2 and len(right_blocks) >= 2:
                         layout_mode = "column"
 
                 if layout_mode == "row":
@@ -334,28 +355,18 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                     full_text_parts.append(el["content"])
 
         raw_text_pymupdf = "\n\n".join(full_text_parts).strip().replace("</div>", "").replace("<div>", "")
-        pymupdf_score = _score_extracted_text(raw_text_pymupdf)
-
+        
         plumber_text, _ = _extract_pdfplumber_text(path)
-        plumber_score = _score_extracted_text(plumber_text)
 
-        force_plumber = False
-        if pages_with_columns:
-            abnormal_ratio = abnormal_pages / pages_with_columns
-            if abnormal_ratio >= 0.3:
-                force_plumber = True
-
+        # QUYẾT ĐỊNH CHỌN BỘ TRÍCH XUẤT (EXTRACTION SELECTION)
+        # ÉP BUỘC dùng PyMuPDF vì nó có bộ Regional Sorting cực tốt cho báo cáo 2 cột.
+        # Chỉ dùng Plumber nếu PyMuPDF hoàn toàn không ra chữ.
         use_plumber = False
-        if prefer_column_first and raw_text_pymupdf and not force_plumber:
-            use_plumber = False
-        else:
-            if plumber_text and (force_plumber or plumber_score < pymupdf_score):
-                use_plumber = True
-            if not raw_text_pymupdf and plumber_text:
-                use_plumber = True
-
+        if not raw_text_pymupdf and plumber_text:
+            use_plumber = True
+        
         selected_text = plumber_text if use_plumber else raw_text_pymupdf
-        extraction_method = "pdfplumber_layout_auto" if use_plumber else "fitz_regional_auto"
+        extraction_method = "pdfplumber_fallback" if use_plumber else "fitz_regional_advanced"
 
         # Dùng \n\n để phân tách các khối rõ ràng, giúp Splitter nhận diện đoạn văn tốt hơn
         final_text = selected_text
@@ -371,7 +382,7 @@ def load_docx(path: str | Path) -> List[Document]:
     """Context-aware DOCX loader."""
     try:
         doc = DocxDocument(str(path))
-        import pytesseract
+        import pytesseract # type: ignore
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
         if os.path.exists(tessdata_dir):
