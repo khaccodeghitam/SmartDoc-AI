@@ -103,16 +103,26 @@ def clean_generated_answer(answer: str) -> str:
     ]
     for marker in raw_block_markers:
         idx = text.lower().find(marker)
-        if idx != -1:
+        if idx != -1 and idx > 0:  # Only process if marker is NOT at the very start
             tail = text[idx + len(marker):].lstrip()
             tail = tail.lstrip(":").lstrip()
             if tail.startswith("\n"):
                 tail = tail.lstrip("\n").lstrip()
-            if tail and len(tail) < len(text):
-                # If the model prefixed raw context, keep the remainder only when it is shorter and meaningful.
-                text = tail if len(tail) < len(text) else text
+            # Only trim if:
+            # 1. tail is not empty
+            # 2. tail is significantly shorter than original (at least 30% shorter to avoid over-trimming)
+            # 3. original text before marker is not too long (marker was early, not in middle of answer)
+            if tail and len(tail) < len(text) * 0.7 and idx < len(text) * 0.15:
+                text = tail
 
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    
+    # Safeguard: if result starts with punctuation (comma, period, etc), likely over-trimmed
+    if text and text[0] in ",.;:!?)":
+        # Restore original if result looks corrupted
+        if len(answer) > len(text) * 1.5:
+            return answer.strip()
+    
     return text
 
 

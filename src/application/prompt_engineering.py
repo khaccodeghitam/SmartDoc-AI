@@ -86,6 +86,7 @@ def build_rag_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
+            "⚠️ BẮT BUỘC: TRẢ LỜI HOÀN TOÀN BẰNG TIẾNG VIỆT. Không được phép trả lời tiếng Anh, tiếng Trung, hay ngôn ngữ khác.\n\n"
             "Dựa vào ngữ cảnh được cung cấp để trả lời câu hỏi. Hãy nỗ lực tìm kiếm và tổng hợp thông tin liên quan dù là một phần.\n"
             "QUY TẮC TƯ DUY:\n"
             "1. Kiểm tra kỹ các con số khi so sánh (ví dụ: 150 nhỏ hơn 160).\n"
@@ -121,7 +122,8 @@ def build_rag_prompt(
 def build_corag_sufficiency_check_prompt(question: str, contexts: list[str]) -> str:
     context_text = "\n\n".join(contexts) if contexts else "(Chưa có ngữ cảnh)"
     return (
-        "Bạn là giám định viên thông tin. Hãy kiểm tra xem ngữ cảnh dưới đây có chứa nội dung để trả lời cho câu hỏi không.\n\n"
+        "Bạn là giám định viên thông tin. Hãy kiểm tra xem ngữ cảnh dưới đây có chứa nội dung để trả lời cho câu hỏi không.\n"
+        "⚠️ ALWAYS RESPOND IN VIETNAMESE ONLY, regardless of context language.\n\n"
         f"CÂU HỎI: {question}\n\n"
         f"NGỮ CẢNH HIỆN TẠI:\n{context_text}\n\n"
         "QUY TẮC:\n"
@@ -144,13 +146,14 @@ def build_corag_final_prompt(
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
+            "⚠️ QUAN TRỌNG: TRẢ LỜI PHẢI BẰNG TIẾNG VIỆT. Nếu context có tiếng Anh, hãy dịch/tóm tắt sang tiếng Việt.\n\n"
             "Dựa hoàn toàn vào ngữ cảnh để trả lời câu hỏi. Ưu tiên giữ nguyên các thuật ngữ chuyên môn và tiêu đề từ ngữ cảnh.\n"
             "TUYỆT ĐỐI KHÔNG lặp lại nội dung và KHÔNG tự bịa ra từ ngữ mới. Trình bày trung thực, chính xác.\n\n"
             f"{doc_overview_text}"
             f"{history_text}"
             f"NGỮ CẢNH TÀI LIỆU:\n{context_text}\n\n"
             f"CÂU HỎI: {question}\n\n"
-            "CÂU TRẢ LỜI (TRÍCH XUẤT CHÍNH XÁC):"
+            "CÂU TRẢ LỜI (TRÍCH XUẤT CHÍNH XÁC, TIẾNG VIỆT):"
         )
 
     return (

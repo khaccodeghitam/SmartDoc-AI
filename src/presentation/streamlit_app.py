@@ -759,10 +759,35 @@ def _render_chat_sidebar() -> None:
         st.warning("Bạn có chắc chắn muốn xóa toàn bộ lịch sử hội thoại? Hành động này sẽ xóa tất cả phiên chat đã lưu.")
         col_yes_history, col_no_history = st.columns(2)
         if col_yes_history.button("Đồng ý xóa", key="yes_clear_history"):
+            # Cancel any running Co-RAG job
+            current_pending = st.session_state.get("pending_qa") or {}
+            _cancel_corag_job(str(current_pending.get("turn_id", "")))
+            
+            # Clear all conversation state
             st.session_state["chat_sessions"] = []
             st.session_state["active_session_id"] = None
             st.session_state["chat_history"] = []
+            st.session_state["qa_requires_pause"] = False
+            _clear_pending_qa_state()
             save_persistent_history([])
+            
+            # Reset RAG state to return to main screen
+            st.session_state["last_index_dir"] = ""
+            st.session_state["last_index_name"] = ""
+            st.session_state["last_uploaded_file"] = ""
+            st.session_state["available_sources"] = []
+            st.session_state["available_file_types"] = []
+            st.session_state["available_upload_dates"] = []
+            st.session_state["sidebar_source_filter"] = []
+            st.session_state["sidebar_file_type_filter"] = []
+            
+            # Save empty app session (F5 persistence)
+            from src.data_layer.conversation_store import save_app_session
+            save_app_session(
+                index_dir="", index_name="", uploaded_file="",
+                sources=[], file_types=[], upload_dates=[]
+            )
+            
             st.session_state["confirm_clear_history_status"] = False
             st.rerun()
         if col_no_history.button("Hủy", key="no_clear_history"):
