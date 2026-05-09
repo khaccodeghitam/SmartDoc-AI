@@ -159,16 +159,17 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
     try:
         import fitz
         import pytesseract # type: ignore
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        import platform
+        if platform.system() == "Windows":
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
         if os.path.exists(tessdata_dir):
             os.environ["TESSDATA_PREFIX"] = tessdata_dir
 
-        full_text_parts = []
+        documents = []
         pages_with_columns = 0
         abnormal_pages = 0
         prefer_column_first = False
-        page_num = 0
 
         with fitz.open(str(path)) as pdf:
             for page_num, page in enumerate(pdf, start=1):
@@ -351,10 +352,15 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                     elif layout_mode == "row" and row_pair_ratio >= row_pair_threshold and interleave_ratio <= row_min_interleave_threshold:
                         abnormal_pages += 1
 
-                for el in final_page_elements:
-                    full_text_parts.append(el["content"])
+                page_text = "\n\n".join([el["content"] for el in final_page_elements]).strip()
+                documents.append(Document(
+                    page_content=page_text, 
+                    metadata={"source": str(path), "file_type": "pdf", "page": page_num}
+                ))
 
-        raw_text_pymupdf = "\n\n".join(full_text_parts).strip().replace("</div>", "").replace("<div>", "")
+        # Phân tích tổng thể để quyết định có dùng Plumber làm fallback không
+        all_pymupdf_text = "\n\n".join([d.page_content for d in documents]).strip()
+        raw_text_pymupdf = all_pymupdf_text.replace("</div>", "").replace("<div>", "")
         
         plumber_text, _ = _extract_pdfplumber_text(path)
 
@@ -365,14 +371,33 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
         if not raw_text_pymupdf and plumber_text:
             use_plumber = True
         
-        selected_text = plumber_text if use_plumber else raw_text_pymupdf
-        extraction_method = "pdfplumber_fallback" if use_plumber else "fitz_regional_advanced"
+        # Quay lại cơ chế Document theo từng trang nhưng bổ sung Overlap thủ công
+        final_documents: list[Document] = []
+        overlap_size = 300 # Số ký tự overlap giữa các trang
+        prev_page_tail = ""
 
-        # Dùng \n\n để phân tách các khối rõ ràng, giúp Splitter nhận diện đoạn văn tốt hơn
-        final_text = selected_text
-        # Loại bỏ các dấu xuống dòng thừa thãi trong nội dung để tránh split vụn
-        final_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', final_text)
-        return [Document(page_content=final_text, metadata={"source": str(path), "file_type": "pdf", "page": page_num, "extraction_method": extraction_method})]
+        for doc in documents:
+            page_content = doc.page_content.strip()
+            # Làm sạch text
+            page_content = re.sub(r'(?<!\n)\n(?!\n)', ' ', page_content)
+            
+            # Đắp phần đuôi của trang trước vào đầu trang sau để tạo overlap
+            current_page_text = f"... {prev_page_tail}\n\n{page_content}" if prev_page_tail else page_content
+            
+            final_documents.append(Document(
+                page_content=current_page_text,
+                metadata={
+                    "source": str(path),
+                    "file_type": "pdf",
+                    "page": doc.metadata["page"],
+                    "extraction_method": "fitz_regional_advanced"
+                }
+            ))
+            
+            # Lưu lại phần đuôi của trang hiện tại cho trang kế tiếp
+            prev_page_tail = page_content[-overlap_size:] if len(page_content) > overlap_size else page_content
+
+        return final_documents
     except Exception as e:
         print(f"⚠️ PDF Advanced failed: {e}")
         return load_pdf(path)
@@ -383,7 +408,9 @@ def load_docx(path: str | Path) -> List[Document]:
     try:
         doc = DocxDocument(str(path))
         import pytesseract # type: ignore
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        import platform
+        if platform.system() == "Windows":
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         tessdata_dir = str(Path(__file__).resolve().parent.parent.parent / "tessdata")
         if os.path.exists(tessdata_dir):
             os.environ["TESSDATA_PREFIX"] = tessdata_dir
@@ -402,8 +429,15 @@ def load_docx(path: str | Path) -> List[Document]:
                             img = Image.open(io.BytesIO(image_part.blob))
                             ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
                             if ocr_res and len(ocr_res) > 15:
-                                full_content_parts.append(f"\n[Nội dung hình ảnh tại đây]:\n{ocr_res}\n")
+                                full_content_parts.append(f"\n[Nội dung hình ảnh]:\n{ocr_res}\n")
                     except: pass
+
+        # --- QUÉT BẢNG BIỂU WORD ---
+        for table in doc.tables:
+            for row in table.rows:
+                row_data = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if row_data:
+                    full_content_parts.append(" | ".join(row_data))
 
         all_text = "\n".join(full_content_parts).strip()
         # No splitting logic for Word as it is usually clean

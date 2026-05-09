@@ -50,20 +50,21 @@ def ingest_document(
     # Điều chỉnh separators để ưu tiên gom văn bản thay vì ngắt quá sớm
     # Bỏ \n\n lên đầu đôi khi làm chunk bị cụt nếu đoạn văn ngắn.
     # Ta sẽ dùng danh sách linh hoạt hơn.
+    # Sử dụng separators thông minh để giữ vững ranh giới ngữ nghĩa của câu
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         length_function=len,
         is_separator_regex=False,
-        # Chi dung khoang trang de ep no overlap o bat cu dau gan moc 1000
-        # Day la cach duy nhat de co sliding window overlap thuc thu
-        separators=[" ", ""],
+        # Ưu tiên ngắt ở đoạn văn để giữ tiêu đề đi liền nội dung, 
+        # dùng khoảng trắng để overlap nếu đoạn văn quá dài.
+        separators=["\n\n", " ", ""],
     )
     chunks = splitter.split_documents(raw_docs)
     chunks = enrich_chunks_metadata(chunks, path_obj)
 
     return IngestResult(
-        file_path=path_obj,
+        file_paths=[path_obj],
         raw_docs_count=len(raw_docs),
         chunks_count=len(chunks),
         chunks=chunks,
@@ -88,7 +89,7 @@ def ingest_multiple_uploaded_files(
         all_chunks.extend(result.chunks)
 
     return IngestResult(
-        file_path=file_paths[0] if file_paths else Path("."),
+        file_paths=file_paths,
         raw_docs_count=total_raw_docs,
         chunks_count=len(all_chunks),
         chunks=all_chunks,

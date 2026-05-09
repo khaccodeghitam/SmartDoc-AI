@@ -87,17 +87,17 @@ def build_rag_prompt(
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (
             "Dựa vào ngữ cảnh được cung cấp để trả lời câu hỏi. Hãy nỗ lực tìm kiếm và tổng hợp thông tin liên quan dù là một phần.\n"
-            "Chỉ khi hoàn toàn không có bất kỳ dữ kiện nào liên quan đến câu hỏi trong ngữ cảnh, hãy trả lời là không tìm thấy.\n"
-            "Kèm tên file gốc khi trích dẫn [file.pdf], không gọi chung chung.\n"
-            "Không chép lại ngữ cảnh, không ghi 'Dữ liệu gốc' hay 'Ngữ cảnh đã dùng'.\n"
-            "Không tự bịa mốc năm, sự kiện, tên đại hội nếu context không có.\n"
-            "Trình bày câu trả lời mạch lạc, sử dụng các đoạn văn hoặc gạch đầu dòng tự nhiên.\n\n"
+            "QUY TẮC TƯ DUY:\n"
+            "1. Kiểm tra kỹ các con số khi so sánh (ví dụ: 150 nhỏ hơn 160).\n"
+            "2. Xác định đúng vai trò: FAISS = Vector/Ngữ nghĩa, BM25 = Từ khóa/Văn bản.\n"
+            "3. Chỉ khi hoàn toàn không có bất kỳ dữ kiện nào liên quan, hãy trả lời là không tìm thấy.\n"
+            "Kèm tên file gốc khi trích dẫn [file.pdf]. Không tự bịa thông tin ngoài context.\n\n"
             f"{multi_part_hint}"
             f"{doc_overview_text}"
             f"{history_text}"
             f"Ngữ cảnh tài liệu:\n{context_text}\n\n"
             f"Câu hỏi: {question}\n\n"
-            "Trả lời:"
+            "Trả lời logic và chính xác:"
         )
 
     return (

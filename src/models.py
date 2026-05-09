@@ -8,7 +8,7 @@ from pathlib import Path
 
 @dataclass
 class IngestResult:
-    file_path: Path
+    file_paths: list[Path]
     raw_docs_count: int
     chunks_count: int
     chunks: list[Document]
