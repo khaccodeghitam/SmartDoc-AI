@@ -129,7 +129,7 @@ def build_corag_sufficiency_check_prompt(question: str, contexts: list[str]) -> 
         "QUY TẮC:\n"
         "- Nếu ngữ cảnh ĐÃ CÓ thông tin chính (ví dụ: đã thấy tên chương, định nghĩa hoặc nội dung cốt lõi): Trả lời duy nhất từ 'SUFFICIENT'.\n"
         "- Chỉ khi hoàn toàn không có thông tin hoặc thông tin quá sơ sài: Trả lời 'SUB_QUERY: <câu hỏi tìm kiếm bổ sung>'.\n"
-        "Ưu tiên trả lời SUFFICIENT để tiết kiệm thời gian."
+        "Đánh giá trung thực — không thiên về SUFFICIENT hay SUB_QUERY."
     )
 
 
@@ -153,7 +153,7 @@ def build_corag_final_prompt(
             f"{history_text}"
             f"NGỮ CẢNH TÀI LIỆU:\n{context_text}\n\n"
             f"CÂU HỎI: {question}\n\n"
-            "CÂU TRẢ LỜI (TRÍCH XUẤT CHÍNH XÁC, TIẾNG VIỆT):"
+            "CÂU TRẢ LỜI CHI TIẾT (TIẾNG VIỆT):"
         )
 
     return (

@@ -20,6 +20,54 @@ from langchain_community.vectorstores import FAISS
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _apply_manual_chunk_overlap(
+    chunks: list[Document], overlap_chars: int
+) -> list[Document]:
+    """Post-processing: đảm bảo mọi cặp chunk liên tiếp đều có overlap thực sự.
+
+    RecursiveCharacterTextSplitter không đảm bảo overlap tại ranh giới \\n\\n
+    khi atomic split lớn hơn chunk_overlap. Hàm này bù vào bằng cách kiểm tra
+    từng cặp và tự chèn phần đuôi của chunk trước vào đầu chunk sau nếu thiếu.
+    """
+    if overlap_chars <= 0 or len(chunks) <= 1:
+        return chunks
+
+    patched: list[Document] = [chunks[0]]
+
+    for i in range(1, len(chunks)):
+        prev = patched[i - 1]
+        curr = chunks[i]
+
+        # Chỉ áp dụng giữa các chunks từ cùng một file nguồn
+        if prev.metadata.get("source") != curr.metadata.get("source"):
+            patched.append(curr)
+            continue
+
+        prev_content = prev.page_content
+        curr_content = curr.page_content
+
+        # Lấy đuôi của chunk trước để kiểm tra overlap
+        tail = prev_content[-overlap_chars:].strip()
+        check_str = tail[-40:] if len(tail) >= 40 else tail  # Kiểm tra 40 ký tự cuối
+
+        # Tăng search_window lên overlap_chars * 5 để bao phủ cả phần overlap
+        # mà RecursiveCharacterTextSplitter đã tự thêm (~100 ký tự đầu).
+        # Nếu search_window quá nhỏ, check_str sẽ nằm ngoài → thêm overlap trùng lặp.
+        search_window_size = min(overlap_chars * 5, len(curr_content))
+        search_window = curr_content[:search_window_size]
+        if check_str and check_str not in search_window:
+            new_content = f"... {tail}\n\n{curr_content}"
+            patched.append(Document(page_content=new_content, metadata=curr.metadata))
+        else:
+            patched.append(curr)
+
+    return patched
+
+
+# ---------------------------------------------------------------------------
 # Ingest
 # ---------------------------------------------------------------------------
 
@@ -56,11 +104,15 @@ def ingest_document(
         chunk_overlap=chunk_overlap,
         length_function=len,
         is_separator_regex=False,
-        # Ưu tiên ngắt ở đoạn văn để giữ tiêu đề đi liền nội dung, 
-        # dùng khoảng trắng để overlap nếu đoạn văn quá dài.
+        # Ưu tiên ngắt ở ranh giới đoạn văn để giữ tiêu đề đi liền nội dung.
         separators=["\n\n", " ", ""],
     )
     chunks = splitter.split_documents(raw_docs)
+
+    # BỔ SUNG: Đảm bảo mọi cặp chunk liên tiếp đều có overlap thực sự.
+    # RecursiveCharacterTextSplitter KHÔNG đảm bảo overlap tại ranh giới \n\n.
+    chunks = _apply_manual_chunk_overlap(chunks, chunk_overlap)
+
     chunks = enrich_chunks_metadata(chunks, path_obj)
 
     return IngestResult(

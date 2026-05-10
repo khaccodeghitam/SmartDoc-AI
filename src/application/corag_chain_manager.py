@@ -55,7 +55,7 @@ class CoRAGChainManager:
     ) -> None:
         self.vector_store_idx = index_dir
         self.model_engine = model_engine
-        self.max_rounds = 2  # Reduced from 3 for faster local execution
+        self.max_rounds = 2  # 2 rounds: assess round1 → fetch round2 → synthesize (4 LLM calls total = ~4min)
         self.top_k = top_k
         self._faiss_store = None
 
