@@ -147,8 +147,22 @@ Nguyen tac:
 - `src/data_layer/pdf_document_storage.py::load_docx`
 
 ### [Phat trien #3] Xoa du lieu tam
+**Cau hoi 3: Them nut xoa lich su**
 
-- `src/data_layer/faiss_vector_store.py::clear_vector_store_data`
+**Button "Clear History":**
+- `src/presentation/streamlit_app.py::_render_chat_sidebar` (L751) — hien thi button "Clear History"
+- `src/presentation/streamlit_app.py` L754–L757 — nut Clear History, click → set `confirm_clear_history_status = True`
+- `src/presentation/streamlit_app.py` L758–L759 — confirmation dialog: `st.warning("Ban co chac chan...")`
+- `src/presentation/streamlit_app.py` L760–L795 — 2 cot "Dong y xoa" / "Huy"
+- `src/presentation/streamlit_app.py` L769 — `st.session_state["chat_history"] = []` → xoa lich su
+- `src/presentation/streamlit_app.py::save_persistent_history` L772 — luu lich su rong xuong file JSON
+
+**Button "Clear Vector Store":**
+- `src/data_layer/faiss_vector_store.py::clear_vector_store_data` (L87) — xoa file trong data/raw + data/index, tra ve so luong da xoa
+- `src/presentation/streamlit_app.py` L951–L954 — nut "Clear Vector Store + trang thai", click → set `confirm_clear_status = True`
+- `src/presentation/streamlit_app.py` L955–L956 — confirmation dialog: `st.warning("Ban co chac chan muon xoa toan bo file da upload...")`
+- `src/presentation/streamlit_app.py` L957–L983 — 2 cot "Dong y xoa" / "Huy"
+- `src/presentation/streamlit_app.py` L959 — goi `clear_vector_store_data()` → xoa FAISS index + raw files
 
 ### [Phat trien #10] Advanced RAG / Self-RAG
 

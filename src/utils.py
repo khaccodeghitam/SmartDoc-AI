@@ -53,13 +53,13 @@ def clean_generated_answer(answer: str) -> str:
     if not text:
         return ""
 
-    text = re.sub(
+    text = re.sub( 
         r"^\s*(?:Câu trả lời:|Trả lời:|Answer:|Detailed Answer:)\s*",
         "",
         text,
         flags=re.IGNORECASE,
     )
-    text = re.sub(r"^\s*(?:Dữ liệu gốc|Du lieu goc)\s*:?", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*(?:Dữ liệu gốc|Du lieu goc)\s*:?", "", text, flags=re.IGNORECASE) 
     text = re.sub(r"^\s*(?:Ngữ cảnh đã dùng|Ngu canh da dung|Ngữ cảnh tài liệu|Ngu canh tai lieu)\s*:?", "", text, flags=re.IGNORECASE)
 
     start_markers = [
@@ -70,12 +70,12 @@ def clean_generated_answer(answer: str) -> str:
         "detailed answer:",
         "dữ liệu gốc:",
         "du lieu goc:",
-    ]
+    ] 
     lower = text.lower()
     best_idx = -1
     for marker in start_markers:
-        idx = lower.rfind(marker)
-        if idx > best_idx:
+        idx = lower.rfind(marker) 
+        if idx > best_idx: 
             best_idx = idx
 
     if best_idx >= 0:

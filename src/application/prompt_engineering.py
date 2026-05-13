@@ -13,13 +13,13 @@ from src.utils import normalize_for_match
 # Language detection
 # ---------------------------------------------------------------------------
 
-def detect_vietnamese(text: str) -> bool:
+def detect_vietnamese(text: str) -> bool: 
     vietnamese_chars = "àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ"
     text_lower = text.lower()
     return any(char in text_lower for char in vietnamese_chars)
 
 
-def is_probably_english_query(text: str) -> bool:
+def is_probably_english_query(text: str) -> bool: 
     normalized = normalize_for_match(text)
     tokens = [token for token in normalized.split() if token]
     if not tokens:
@@ -142,7 +142,7 @@ def build_corag_final_prompt(
     context_text = "\n\n".join(contexts)
     history_context = build_chat_history_context(chat_history)
     history_text = f"Lịch sử hội thoại liên quan:\n{history_context}\n\n" if history_context else ""
-    doc_overview_text = f"Tổng quan tài liệu:\n{document_overview}\n\n" if document_overview else ""
+    doc_overview_text = f"Tổng quan tài liệu:\n{document_overview}\n\n" if document_overview else "" 
 
     if detect_vietnamese(question) or not is_probably_english_query(question):
         return (

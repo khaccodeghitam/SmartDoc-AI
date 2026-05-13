@@ -160,7 +160,7 @@ class CoRAGChainManager:
     def ask(
         self,
         question: str,
-        retrieval_query: str | None = None,
+        retrieval_query: str | None = None, 
         source_filter: list[str] | None = None,
         file_type_filter: list[str] | None = None,
         upload_date_filter: list[str] | None = None,
@@ -177,8 +177,8 @@ class CoRAGChainManager:
             retrieval_text = question_text
 
         self._notify_progress(progress_callback, "Đang khởi tạo Co-RAG và kiểm tra dữ liệu truy xuất...")
-        store = self._get_faiss()
-        all_docs = list(store.docstore._dict.values())
+        store = self._get_faiss() 
+        all_docs = list(store.docstore._dict.values()) # lấy tất cả các chunk đã được chunk hóa 
         if not all_docs:
             raise ValueError("Vector store chưa có dữ liệu.")
 
@@ -195,10 +195,10 @@ class CoRAGChainManager:
             source_filter=source_filter,
             file_type_filter=file_type_filter,
             upload_date_filter=upload_date_filter,
-        )
+        ) 
         all_raw_retrieved_docs.extend(raw_docs)
 
-        accumulated_context = self._deduplicate_chunks(accumulated_context, initial_chunks)
+        accumulated_context = self._deduplicate_chunks(accumulated_context, initial_chunks) 
         iterations.append(
             CoRAGIteration(
                 round_num=1,
@@ -237,7 +237,7 @@ class CoRAGChainManager:
                 sub_query=prev.sub_query,
                 retrieved_chunks=prev.retrieved_chunks,
                 llm_assessment=assessment,
-            )
+            ) # dùng để lưu lại assessment của vòng trước
 
             if self._is_explicit_sufficient_signal(assessment, question_text, accumulated_context):
                 self._notify_progress(progress_callback, "AI xác nhận ngữ cảnh đã đủ, kết thúc truy xuất sớm...")
@@ -278,7 +278,7 @@ class CoRAGChainManager:
             document_overview="",
             chat_history=chat_history if include_history else None,
         )
-        answer = clean_generated_answer(self.model_engine.generate(prompt=final_prompt, question=question_text))
+        answer = clean_generated_answer(self.model_engine.generate(prompt=final_prompt, question=question_text)) 
         
         # Self-RAG score
         self._notify_progress(progress_callback, "Đang chấm độ tự tin kết quả...")
@@ -290,7 +290,7 @@ class CoRAGChainManager:
         return CoRAGAnswer(
             answer=answer,
             context_chunks=accumulated_context,
-            iterations=iterations,
+            iterations=iterations, 
             final_prompt=final_prompt,
             total_rounds=len(iterations),
             confidence_score=confidence,

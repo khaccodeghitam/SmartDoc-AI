@@ -1231,7 +1231,9 @@ def main() -> None:
                         st.success(f"Tìm thấy {len(docs)} chunks")
                         st.caption(
                             "Hybrid+CrossEncoder: "
-                            f"{len(docs)} | Hybrid Bi-encoder: {len(bi_encoder_docs)} | Vector-only: {len(vector_only_docs)}"
+                            f"{len(docs)} | "
+                            # f"Hybrid Bi-encoder: {len(bi_encoder_docs)} | "
+                            f"Vector-only: {len(vector_only_docs)}"
                         )
                         if docs:
                             st.markdown("#### Tóm tắt nhanh")
@@ -1246,19 +1248,19 @@ def main() -> None:
             bi_encoder_chunks = st.session_state.get("last_bi_encoder_chunks", [])
             vector_chunks = st.session_state.get("last_vector_only_chunks", [])
             if hybrid_chunks or bi_encoder_chunks or vector_chunks:
-                tab_hybrid, tab_bi, tab_vector = st.tabs(["Hybrid + CrossEncoder", "Hybrid Bi-encoder", "Vector-only Baseline"])
+                tab_hybrid, tab_vector = st.tabs(["Hybrid + CrossEncoder", "Vector-only Baseline"])
                 with tab_hybrid:
                     if hybrid_chunks:
                         for idx, doc in enumerate(hybrid_chunks, start=1):
                             _render_result_card(idx, doc)
                     else:
                         st.info("Hybrid search chưa trả về chunk nào.")
-                with tab_bi:
-                    if bi_encoder_chunks:
-                        for idx, doc in enumerate(bi_encoder_chunks, start=1):
-                            _render_result_card(idx, doc)
-                    else:
-                        st.info("Hybrid bi-encoder chưa trả về chunk nào.")
+                # with tab_bi:
+                #     if bi_encoder_chunks:
+                #         for idx, doc in enumerate(bi_encoder_chunks, start=1):
+                #             _render_result_card(idx, doc)
+                #     else:
+                #         st.info("Hybrid bi-encoder chưa trả về chunk nào.")
                 with tab_vector:
                     if vector_chunks:
                         for idx, doc in enumerate(vector_chunks, start=1):

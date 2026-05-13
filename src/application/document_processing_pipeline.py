@@ -77,40 +77,20 @@ def ingest_document(
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     use_advanced_pdf: bool = False,
 ) -> IngestResult:
-    """
-    Ingest and process a single document.
     
-    Args:
-        file_path: Path to the document
-        chunk_size: Size of text chunks
-        chunk_overlap: Overlap between chunks
-        use_advanced_pdf: Use PyMuPDF with block detection for PDFs (better for multi-column)
-    
-    Returns:
-        IngestResult with processed chunks
-    """
     path_obj = Path(file_path)
     raw_docs = load_documents(path_obj, use_advanced_pdf=use_advanced_pdf)
 
-    # We use RecursiveCharacterTextSplitter but with smart separators
-    # to avoid splitting too early on small paragraphs.
-    # We want chunks to be as close to chunk_size as possible.
-    # Điều chỉnh separators để ưu tiên gom văn bản thay vì ngắt quá sớm
-    # Bỏ \n\n lên đầu đôi khi làm chunk bị cụt nếu đoạn văn ngắn.
-    # Ta sẽ dùng danh sách linh hoạt hơn.
-    # Sử dụng separators thông minh để giữ vững ranh giới ngữ nghĩa của câu
+    
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         length_function=len,
         is_separator_regex=False,
-        # Ưu tiên ngắt ở ranh giới đoạn văn để giữ tiêu đề đi liền nội dung.
         separators=["\n\n", " ", ""],
     )
     chunks = splitter.split_documents(raw_docs)
 
-    # BỔ SUNG: Đảm bảo mọi cặp chunk liên tiếp đều có overlap thực sự.
-    # RecursiveCharacterTextSplitter KHÔNG đảm bảo overlap tại ranh giới \n\n.
     chunks = _apply_manual_chunk_overlap(chunks, chunk_overlap)
 
     chunks = enrich_chunks_metadata(chunks, path_obj)

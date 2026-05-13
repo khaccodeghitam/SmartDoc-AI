@@ -74,8 +74,8 @@ def _join_chars_with_spacing(chars: list[dict], gap_ratio: float, min_gap: float
                 size = min(prev.get("size", 10.0), ch.get("size", 10.0))
                 if size <= 0:
                     size = max(1.0, prev_bbox[3] - prev_bbox[1])
-                threshold = max(min_gap, size * gap_ratio)
-                if gap > threshold and parts and not parts[-1].endswith(" "):
+                threshold = max(min_gap, size * gap_ratio) # gap_ratio là tỉ lệ với kích thước font, min_gap là khoảng cách tối thiểu, threshold là khoảng cách tối thiểu để thêm khoảng trắng
+                if gap > threshold and parts and not parts[-1].endswith(" "): 
                     parts.append(" ")
             else:
                 if parts and parts[-1] and parts[-1][-1].isalnum() and text[0].isalnum():
@@ -88,7 +88,7 @@ def _join_chars_with_spacing(chars: list[dict], gap_ratio: float, min_gap: float
 def _extract_line_text_rawdict(line: dict, gap_ratio: float, min_gap: float) -> str:
     chars: list[dict] = []
     for span in line.get("spans", []):
-        span_size = span.get("size", 10.0)
+        span_size = span.get("size", 10.0) 
         for ch in span.get("chars", []):
             if ch.get("c"):
                 chars.append({"c": ch.get("c"), "bbox": ch.get("bbox"), "size": span_size})
@@ -137,8 +137,8 @@ def _extract_pdfplumber_text(path: str | Path) -> tuple[str, list[Document]]:
             for page_num, page in enumerate(pdf.pages, 1):
                 text = page.extract_text(
                     layout=True,
-                    x_tolerance=2,
-                    y_tolerance=2,
+                    x_tolerance=2, # x_tolerance khoảng cách tối đa giữa các ký tự trong 1 hàng để coi là cùng 1 hàng
+                    y_tolerance=2, # y_tolerance khoảng cách tối đa giữa các ký tự trong 1 cột để coi là cùng 1 cột
                 )
                 if text:
                     cleaned = text.strip().replace("</div>", "").replace("<div>", "")
@@ -158,7 +158,7 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
     """Advanced PDF loader with smart column sorting and OCR."""
     try:
         import fitz
-        import pytesseract # type: ignore
+        import pytesseract                                                                                                                                                                                                                                                                                              # type: ignore
         import platform
         if platform.system() == "Windows":
             pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -202,7 +202,7 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                 page_dict = page.get_text("rawdict")
                 page_elements = []
 
-                for block in page_dict["blocks"]:
+                for block in page_dict["blocks"]: 
                     bbox = block["bbox"] # (x0, y0, x1, y1)
                     group = get_block_group(bbox)
 
@@ -254,7 +254,7 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                 if not page_elements:
                     try:
                         pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples) 
                         full_page_ocr = pytesseract.image_to_string(img, lang="vie").strip()
                         if len(full_page_ocr) > 20:
                             page_elements.append({
@@ -263,9 +263,28 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                             })
                     except: pass
 
+                # Lúc này page_elements sẽ như thế này 
+                # page_elements = [
+                #     # Từ rawdict text blocks (type==0):
+                #     {"y0": 30,  "y1": 45,  "x": 50,  "x1": 290, "group": 0, "content": "I. GIỚI THIỆU"},
+                #     {"y0": 50,  "y1": 200, "x": 50,  "x1": 280, "group": 1, "content": "Đây là đoạn cột trái..."},
+                #     {"y0": 50,  "y1": 150, "x": 310, "x1": 550, "group": 2, "content": "Đây là đoạn cột phải..."},
+                #     {"y0": 210, "y1": 350, "x": 50,  "x1": 280, "group": 1, "content": "Tiếp tục cột trái..."},
+                #     # Từ OCR ảnh (type==1 hoặc backup scan):
+                #     {"y0": 400, "y1": 500, "x": 100, "x1": 450, "group": 0, "content": "[Nội dung từ ảnh]:\nBiểu đồ..."},
+                # ]
+
+
                 # --- THUẬT TOÁN SẮP XẾP THEO VÙNG (REGIONAL COLUMN SORTING) ---
                 # Sắp xếp tất cả theo Y để xử lý từ trên xuống dưới
                 page_elements.sort(key=lambda e: e["y0"])
+
+                # vd: sau khi page_elements đã sort Y:                                   final_page_elements:
+                # [y=30,  group=0, "I. GIỚI THIỆU"]                                   [y=30,  group=0, "I. GIỚI THIỆU"]   
+                # [y=50,  group=1, "Cột trái 1"]                                      [y=50,  group=1, "Cột trái 1"]     
+                # [y=50,  group=2, "Cột phải 1"]                                      [y=210, group=1, "Cột trái 2"]
+                # [y=210, group=1, "Cột trái 2"]                                      [y=50,  group=2, "Cột phải 1"]
+                # [y=400, group=0, "II. KẾT LUẬN"]                                    [y=400, group=0, "II. KẾT LUẬN"]  
 
                 left_blocks = [e for e in page_elements if e["group"] == 1]
                 right_blocks = [e for e in page_elements if e["group"] == 2]
@@ -277,9 +296,9 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                 if left_blocks and right_blocks:
                     left_max_x1 = max(e.get("x1", e["x"]) for e in left_blocks)
                     right_min_x0 = min(e["x"] for e in right_blocks)
-                    gutter_ratio = (right_min_x0 - left_max_x1) / max(1.0, page_width)
+                    gutter_ratio = (right_min_x0 - left_max_x1) / max(1.0, page_width) #Tính tỉ lệ khoảng cách giữa cột trái và cột phải so với chiều rộng trang
 
-                column_separated = gutter_ratio >= 0.04
+                column_separated = gutter_ratio >= 0.04 
                 if (top_fullwidth or column_separated) and left_blocks and right_blocks:
                     if len(left_blocks) >= 3 and len(right_blocks) >= 3:
                         prefer_column_first = True
@@ -344,6 +363,14 @@ def load_pdf_advanced(path: str | Path) -> List[Document]:
                         temp_column_elements.sort(key=lambda x: (x["group"], x["y0"]))
                         final_page_elements.extend(temp_column_elements)
 
+                    # vd: sau khi sắp xếp final_page_elements:
+                    # final_page_elements:
+                    # [y=30,  group=0, "I. GIỚI THIỆU"]           
+                    # [y=50,  group=1, "Cột trái 1"]              
+                    # [y=210, group=1, "Cột trái 2"]             
+                    # [y=50,  group=2, "Cột phải 1"]             
+                    # [y=400, group=0, "II. KẾT LUẬN"]           
+
                 if left_blocks and right_blocks:
                     pages_with_columns += 1
                     interleave_ratio = compute_interleave_ratio(final_page_elements)
@@ -407,7 +434,7 @@ def load_docx(path: str | Path) -> List[Document]:
     """Context-aware DOCX loader."""
     try:
         doc = DocxDocument(str(path))
-        import pytesseract # type: ignore
+        import pytesseract                                                                                                                                                                                  # type: ignore
         import platform
         if platform.system() == "Windows":
             pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -425,7 +452,7 @@ def load_docx(path: str | Path) -> List[Document]:
                     try:
                         blip_ids = re.findall(r'r:embed="([^"]+)"', run.element.xml)
                         for rId in blip_ids:
-                            image_part = doc.part.related_parts[rId]
+                            image_part = doc.part.related_parts[rId] 
                             img = Image.open(io.BytesIO(image_part.blob))
                             ocr_res = pytesseract.image_to_string(img, lang="vie").strip()
                             if ocr_res and len(ocr_res) > 15:

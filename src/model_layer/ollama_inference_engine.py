@@ -61,7 +61,7 @@ def _heuristic_confidence_score(query: str, answer: str, context_text: str) -> i
 
     query_alignment = keyword_overlap_score(query, answer_text)
     context_alignment = keyword_overlap_score(context_text, answer_text)
-    answer_length = len(normalize_for_match(answer_text))
+    answer_length = len(normalize_for_match(answer_text)) 
 
     length_score = 0.0
     if answer_length >= 200:
@@ -167,13 +167,13 @@ class OllamaInferenceEngine:
         
         try:
             # We use the lighter scoring LLM but with extremely short output constraint
-            scoring_llm = self._get_scoring_llm()
+            scoring_llm = self._get_scoring_llm() 
             # Set small max_tokens if supported, or just rely on prompt
-            score_raw = str(scoring_llm.invoke(fast_scoring_prompt)).strip()
+            score_raw = str(scoring_llm.invoke(fast_scoring_prompt)).strip() 
             matched = re.search(r"\d+", score_raw)
             
             # Extract and clamp the model score between 1 and 10
-            model_score = 7
+            model_score = 7 
             if matched:
                 try:
                     model_score = max(1, min(10, int(matched.group())))
@@ -181,8 +181,8 @@ class OllamaInferenceEngine:
                     model_score = 7
             
             # Blend with heuristic for more stability
-            heuristic_score = _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)
-            final_score = round((model_score * 0.4) + (heuristic_score * 0.6))
+            heuristic_score = _heuristic_confidence_score(query=query, answer=answer, context_text=context_text) # 
+            final_score = round((model_score * 0.4) + (heuristic_score * 0.6)) 
             return max(1, min(10, final_score))
         except Exception:
             return _heuristic_confidence_score(query=query, answer=answer, context_text=context_text)
