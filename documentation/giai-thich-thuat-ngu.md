@@ -45,6 +45,19 @@ Sau khi ingest xong, tài liệu mới thật sự "vào hệ thống" và có t
 
 ---
 
+## Vì sau khi “embedding”, mỗi đoạn văn và câu hỏi đều được đổi thành vector để máy tính so sánh ý nghĩa giữa chúng.
+ ## Vector có tác dụng:
+
+biểu diễn nội dung dưới dạng số;
+giúp tìm đoạn gần nghĩa nhất với câu hỏi;
+làm retrieval nhanh và chính xác hơn so với chỉ tìm bằng từ khóa.
+
+## Retrieval là bước tìm và lấy ra các đoạn tài liệu liên quan nhất với câu hỏi của người dùng.
+Nói ngắn gọn:
+Người dùng hỏi
+Hệ thống đi tìm những chunk phù hợp nhất trong index
+Lấy chúng ra làm ngữ cảnh để LLM trả lời
+
 ## 3) FAISS index là gì?
 
 FAISS là thư viện giúp tìm kiếm vector rất nhanh (do Facebook AI Research phát triển).
@@ -82,6 +95,26 @@ Top-k nghĩa là lấy ra `k` đoạn phù hợp nhất.
 - Các đoạn này được đưa cho LLM làm ngữ cảnh để trả lời chính xác hơn.
 
 Hiểu ngắn gọn: lưu vào vector database để tìm nhanh đúng đoạn, thay vì phải dò thủ công trong cả tài liệu.
+
+---
+
+## BM25 là gì?
+
+BM25 là một cách tìm kiếm theo từ khóa rất phổ biến. Nó chấm điểm các đoạn văn dựa trên việc từ trong câu hỏi xuất hiện nhiều hay ít trong tài liệu, rồi ưu tiên đoạn có khả năng liên quan cao hơn.
+
+Hiểu đơn giản: BM25 giống như cách tra cứu bằng từ khóa thông minh hơn. Nó không hiểu nghĩa sâu như embedding, nhưng rất mạnh khi câu hỏi chứa đúng các từ quan trọng có trong tài liệu.
+
+Trong SmartDoc AI, BM25 thường được dùng chung với vector search để tăng độ chính xác: một bên tìm theo ý nghĩa, một bên tìm theo từ khóa.
+
+---
+
+## Hybrid Retrieval là gì?
+
+Hybrid Retrieval là cách kết hợp 2 kiểu tìm kiếm cùng lúc:
+- Vector search: tìm theo ngữ nghĩa (ý nghĩa câu hỏi)
+- BM25: tìm theo từ khóa xuất hiện thật trong tài liệu
+
+Hiểu ngắn gọn: Hybrid = vừa hiểu ý, vừa bám từ khóa, nên thường trả về ngữ cảnh đúng hơn so với chỉ dùng một cách tìm kiếm.
 
 ---
 
@@ -125,3 +158,17 @@ Bạn có file chapter2.pdf.
 - Ingest: Nạp tài liệu vào hệ thống qua các bước đọc -> cắt -> vector hóa -> lưu.
 - FAISS index: Bộ chỉ mục vector để tìm đoạn liên quan cực nhanh.
 - Build FAISS index: Quá trình tạo/cập nhật bộ chỉ mục FAISS từ dữ liệu vừa nạp.
+
+## 9) query rewriting là gì?
+- chuyển đổi/sửa câu hỏi người dùng (đặc biệt follow-up) thành một truy vấn độc lập, rõ ràng và đầy đủ ngữ cảnh 
+- ví dụ: resolve đại từ, bổ sung thông tin từ lịch sử hội thoại, chuẩn hoá cú pháp. Mục đích: giúp bộ retriever/LLM hiểu đúng ý và tìm ngữ cảnh liên quan chính xác hơn.
+
+## Embedding là cách biến một đoạn văn, câu hỏi hoặc từ thành vector số để máy tính hiểu và so sánh ý nghĩa của chúng.
+- Embedding = “nội dung đã được mã hoá thành số”
+
+## Metadata là thông tin mô tả đi kèm dữ liệu, như tên file, loại file, trang, nguồn, ngày upload, hoặc chunk thuộc tài liệu nào.
+- Metadata = “thông tin nhãn đi kèm để quản lý và lọc”
+
+## 9) pipeline ingest là gì?
+- quy trình đưa tài liệu vào hệ thống tìm kiếm — gồm lưu file thô, tách thành chunk, enrich metadata, sinh embedding và lưu/ghi vào FAISS index. Mục đích: chuẩn hoá và tiền xử lý dữ liệu để retrieval nhanh, chính xác và có thể lọc theo nguồn/metadata.
+
